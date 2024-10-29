@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'account',
     'mentor_mentee',
+    'projectUtility',
 ]
 
 MIDDLEWARE = [
