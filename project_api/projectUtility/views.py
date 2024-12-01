@@ -196,9 +196,6 @@ class CallbackView(APIView):
 
 
 class CreateMeetView(APIView):
-    """
-    View to create a Google Meet event.
-    """
     permission_classes = [AllowAny]
 
     @csrf_exempt
@@ -232,12 +229,16 @@ class CreateMeetView(APIView):
                     'requestId': 'test123',
                 },
             },
-            'attendees': [{'email': 'paaraspethe6277@gmail.com'}],
+            'attendees': [{'email': 'vidyasangam.edu@gmail.com'}],
         }
 
         try:
             event = service.events().insert(calendarId='primary', body=event, conferenceDataVersion=1).execute()
             meet_link = event.get('hangoutLink')
-            return JsonResponse({'meet_link': meet_link})
+            meeting_id = meet_link.split('/')[-1]  # Extract meeting ID from the link
+            
+            # Store `meeting_id` as needed for future reference
+
+            return JsonResponse({'meet_link': meet_link, 'meeting_id': meeting_id})
         except Exception as e:
             return JsonResponse({'error': 'Failed to create meeting'}, status=500)
