@@ -2,7 +2,7 @@ import csv
 import requests
 
 # API request (replace with actual API URL)
-url = 'http://localhost:5000/match'  # Replace with your endpoint
+url = 'http://127.0.0.1:5000/match'  # Replace with your endpoint
 response = requests.get(url)
 data = response.json()
 

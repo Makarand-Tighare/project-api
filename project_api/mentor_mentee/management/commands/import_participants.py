@@ -7,9 +7,9 @@ class Command(BaseCommand):
 
     def handle(self, *args, **kwargs):
         # Path to your Excel file
-        file_path = '/Users/makarand/Coding/Mini Project/project-api/project_api/mentor_mentee/management/commands/mentor_mentee_test_data.xlsx'
+        file_path = '/Users/makarand/Coding/Mini Project/project-api/project_api/mentor_mentee/management/commands/mentor_mentee_test_data.csv'
         # Load the Excel data
-        df = pd.read_excel(file_path)
+        df = pd.read_csv(file_path)
 
         for _, row in df.iterrows():
             participant = Participant(
