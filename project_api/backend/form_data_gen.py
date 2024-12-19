@@ -7,9 +7,26 @@ output_path = os.path.join('mentor_mentee_test_data.csv')
 
 # Helper function to generate random Indian names
 def generate_indian_name(gender="male"):
-    male_names = ["Aarav", "Vivaan", "Aditya", "Karthik", "Rohan", "Kabir", "Rajesh", "Siddharth", "Anil", "Dev"]
-    female_names = ["Ananya", "Priya", "Ishita", "Kavya", "Meera", "Radhika", "Sneha", "Pooja", "Nandini", "Aditi"]
-    last_names = ["Sharma", "Verma", "Iyer", "Patel", "Joshi", "Rao", "Gupta", "Kapoor", "Mehta", "Deshmukh"]
+    male_names = [
+    "Aarav", "Vivaan", "Aditya", "Karthik", "Rohan", "Kabir", "Rajesh", "Siddharth", "Anil", "Dev", 
+    "Harish", "Arjun", "Sameer", "Rahul", "Nitin", "Aakash", "Vikram", "Pranav", "Chetan", "Naveen",
+    "Ravi", "Dinesh", "Suresh", "Amit", "Manoj", "Kiran", "Ashok", "Mohit", "Deepak", "Gopal",
+    "Ramesh", "Rohit", "Pankaj", "Vishal", "Suraj", "Nikhil", "Ankit", "Yash", "Tushar", "Lokesh"
+    ]
+
+    female_names = [
+        "Ananya", "Priya", "Ishita", "Kavya", "Meera", "Radhika", "Sneha", "Pooja", "Nandini", "Aditi",
+        "Neha", "Riya", "Sanya", "Anjali", "Swati", "Divya", "Madhavi", "Tanvi", "Esha", "Aarohi",
+        "Tara", "Rashmi", "Geeta", "Asha", "Pallavi", "Suhani", "Vaishnavi", "Jyoti", "Simran", "Laxmi",
+        "Harini", "Krisha", "Varsha", "Sarita", "Ila", "Veena", "Mansi", "Rekha", "Bhavna", "Sangeeta"
+    ]
+
+    last_names = [
+        "Sharma", "Verma", "Iyer", "Patel", "Joshi", "Rao", "Gupta", "Kapoor", "Mehta", "Deshmukh",
+        "Bhat", "Basu", "Chatterjee", "Nair", "Chopra", "Ghosh", "Reddy", "Banerjee", "Agarwal", "Dubey",
+        "Malhotra", "Pandey", "Kumar", "Singh", "Yadav", "Thakur", "Mishra", "Tripathi", "Das", "Pillai",
+        "Kulkarni", "Naik", "Kashyap", "Chauhan", "Chaudhary", "Tiwari", "Kohli", "Dutta", "Roy", "Mittal"
+    ]
     first_name = random.choice(male_names if gender == "male" else female_names)
     last_name = random.choice(last_names)
     return f"{first_name} {last_name}"

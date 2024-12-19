@@ -2,8 +2,10 @@ from flask import Flask, jsonify
 import requests
 from collections import defaultdict
 from itertools import cycle
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)
 
 # API URL for fetching student data
 LIST_PARTICIPANTS_API = 'http://127.0.0.1:8000/api/mentor_mentee/list_participants/'
@@ -73,33 +75,46 @@ def match_mentors_mentees(students):
     mentors = []
     mentees = []
     matches = []
-    
+
     # Separate students into mentor and mentee lists based on semester
     for student in students:
         if int(student['semester']) >= 5:
             mentors.append(student)
-        mentees.append(student)  # Everyone can be a mentee
-    
+        else:
+            mentees.append(student)  # Only students with semester < 5 should be mentees
+
     # Sort mentors by their evaluated score
     mentors = sorted(mentors, key=evaluate_student, reverse=True)
-    
+
     # Dictionary to count mentees per mentor (max 3 mentees per mentor)
     mentor_mentee_count = defaultdict(int)
-    
+
     # First match based on common tech stack or areas of interest
     unmatched_mentees = []
     for mentee in mentees:
         matched = False
         for mentor in mentors:
-            if mentor_mentee_count[mentor['name']] < 3 and has_common_interests(mentor, mentee):
-                matches.append((mentor['name'], mentee['name']))
+            # Ensure that the mentor and mentee are not the same person
+            if mentor_mentee_count[mentor['name']] < 3 and mentor['name'] != mentee['name'] and has_common_interests(mentor, mentee):
+                matches.append({
+                    "mentor": {
+                        "name": mentor['name'],
+                        "registration_no": mentor['registration_no'],
+                        "semester": mentor['semester']
+                    },
+                    "mentee": {
+                        "name": mentee['name'],
+                        "registration_no": mentee['registration_no'],
+                        "semester": mentee['semester']
+                    }
+                })
                 mentor_mentee_count[mentor['name']] += 1
                 matched = True
                 break
-        
+
         if not matched:
             unmatched_mentees.append(mentee)
-    
+
     # Fallback: Assign remaining unmatched mentees to mentors
     if unmatched_mentees:
         mentor_cycle = cycle(mentors)  # Cycle through mentors to ensure even distribution
@@ -107,7 +122,18 @@ def match_mentors_mentees(students):
             mentor = next(mentor_cycle)
             while mentor_mentee_count[mentor['name']] >= 3:
                 mentor = next(mentor_cycle)
-            matches.append((mentor['name'], mentee['name']))
+            matches.append({
+                "mentor": {
+                    "name": mentor['name'],
+                    "registration_no": mentor['registration_no'],
+                    "semester": mentor['semester']
+                },
+                "mentee": {
+                    "name": mentee['name'],
+                    "registration_no": mentee['registration_no'],
+                    "semester": mentee['semester']
+                }
+            })
             mentor_mentee_count[mentor['name']] += 1
 
     return matches
