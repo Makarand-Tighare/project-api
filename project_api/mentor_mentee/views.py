@@ -245,3 +245,19 @@ def match_participants(request):
 
     matches = match_mentors_mentees(students)
     return Response({"matches": matches})
+
+@api_view(['DELETE'])
+def delete_all_participants(request):
+    """Endpoint to delete all participants from the database."""
+    try:
+        count = Participant.objects.count()
+        Participant.objects.all().delete()
+        return Response({
+            "message": f"Successfully deleted all {count} participants",
+            "count": count
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({
+            "error": "Failed to delete participants",
+            "details": str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
