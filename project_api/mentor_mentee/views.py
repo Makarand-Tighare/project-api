@@ -3,8 +3,8 @@ import json
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from .models import Participant, MentorMenteeRelationship
-from .serializers import ParticipantSerializer
+from .models import Participant, MentorMenteeRelationship, Session
+from .serializers import ParticipantSerializer, SessionSerializer
 from collections import defaultdict
 from itertools import cycle
 from django.db import transaction
@@ -304,3 +304,126 @@ def get_participant_profile(request, registration_no):
         return Response({"error": "Participant not found"}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ---- Session Management Endpoints ----
+
+@api_view(['POST'])
+def create_session(request):
+    """Create a new mentoring session."""
+    try:
+        # Add the mentor from request data
+        mentor_reg_no = request.data.get('mentor')
+        
+        # Verify that the mentor exists
+        try:
+            mentor = Participant.objects.get(registration_no=mentor_reg_no)
+        except Participant.DoesNotExist:
+            return Response({
+                "error": "Invalid mentor registration number"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Create serializer with request data
+        serializer = SessionSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            # Save session with mentor
+            session = serializer.save(mentor=mentor)
+            
+            return Response({
+                "message": "Session created successfully",
+                "session": SessionSerializer(session).data
+            }, status=status.HTTP_201_CREATED)
+        else:
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+    except Exception as e:
+        return Response({
+            "error": "Failed to create session",
+            "details": str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def get_user_sessions(request, registration_no):
+    """Get all sessions for a specific user (as mentor or participant)."""
+    try:
+        # Verify the participant exists
+        try:
+            participant = Participant.objects.get(registration_no=registration_no)
+        except Participant.DoesNotExist:
+            return Response({
+                "error": "Participant not found"
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get sessions where user is a mentor
+        mentor_sessions = Session.objects.filter(mentor=participant)
+        
+        # Get sessions where user is a participant
+        participant_sessions = Session.objects.filter(participants=participant)
+        
+        # Combine the two querysets without duplicates
+        all_sessions = mentor_sessions.union(participant_sessions)
+        
+        # Sort by date_time (most recent first)
+        all_sessions = all_sessions.order_by('-date_time')
+        
+        # Serialize and return
+        serializer = SessionSerializer(all_sessions, many=True)
+        return Response(serializer.data)
+        
+    except Exception as e:
+        return Response({
+            "error": "Failed to retrieve sessions",
+            "details": str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+def get_session_details(request, session_id):
+    """Get details for a specific session."""
+    try:
+        session = Session.objects.get(session_id=session_id)
+        serializer = SessionSerializer(session)
+        return Response(serializer.data)
+    except Session.DoesNotExist:
+        return Response({
+            "error": "Session not found"
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            "error": "Failed to retrieve session details",
+            "details": str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['DELETE'])
+def delete_session(request, session_id):
+    """Delete a specific session."""
+    try:
+        try:
+            session = Session.objects.get(session_id=session_id)
+        except Session.DoesNotExist:
+            return Response({
+                "error": "Session not found"
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check if the requester is the mentor who created the session
+        mentor_reg_no = request.data.get('mentor_reg_no')
+        if mentor_reg_no and session.mentor.registration_no != mentor_reg_no:
+            return Response({
+                "error": "Only the session creator can delete this session"
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Delete the session
+        session.delete()
+        
+        return Response({
+            "message": "Session deleted successfully"
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response({
+            "error": "Failed to delete session",
+            "details": str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

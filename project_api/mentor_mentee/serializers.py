@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.core.exceptions import ValidationError
-from .models import Participant, MentorMenteeRelationship
+from .models import Participant, MentorMenteeRelationship, Session
 
 # Validator for file size
 def validate_file_size(file):
@@ -154,3 +154,59 @@ class ParticipantSerializer(serializers.ModelSerializer):
         
         instance.save()
         return instance
+
+
+class ParticipantInfoSerializer(serializers.ModelSerializer):
+    """Simple serializer for participant information in sessions"""
+    class Meta:
+        model = Participant
+        fields = ('name', 'registration_no', 'semester', 'branch')
+
+
+class SessionSerializer(serializers.ModelSerializer):
+    """Serializer for mentoring sessions"""
+    # Add more detailed information about the mentor and participants
+    mentor_details = ParticipantInfoSerializer(source='mentor', read_only=True)
+    participant_details = ParticipantInfoSerializer(source='participants', many=True, read_only=True)
+    
+    class Meta:
+        model = Session
+        fields = ('session_id', 'mentor', 'mentor_details', 'session_type', 
+                  'date_time', 'meeting_link', 'location', 'summary', 
+                  'participants', 'participant_details', 'created_at')
+        read_only_fields = ('session_id', 'created_at')
+    
+    def validate(self, data):
+        """Validate that the correct session details are provided based on type"""
+        session_type = data.get('session_type')
+        meeting_link = data.get('meeting_link')
+        location = data.get('location')
+        
+        if session_type == 'virtual' and not meeting_link:
+            raise serializers.ValidationError("Meeting link is required for virtual sessions")
+        if session_type == 'physical' and not location:
+            raise serializers.ValidationError("Location is required for physical sessions")
+        
+        return data
+    
+    def create(self, validated_data):
+        # Extract the participants data from the request
+        participants_data = self.initial_data.get('participants', [])
+        
+        # Remove participants from validated_data as we'll handle it separately
+        if 'participants' in validated_data:
+            validated_data.pop('participants')
+        
+        # Create session without participants first
+        session = Session.objects.create(**validated_data)
+        
+        # Add participants to the session
+        if participants_data:
+            for reg_no in participants_data:
+                try:
+                    participant = Participant.objects.get(registration_no=reg_no)
+                    session.participants.add(participant)
+                except Participant.DoesNotExist:
+                    pass  # Skip if participant doesn't exist
+        
+        return session

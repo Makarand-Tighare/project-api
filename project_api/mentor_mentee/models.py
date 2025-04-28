@@ -76,3 +76,31 @@ class MentorMenteeRelationship(models.Model):
         
     def __str__(self):
         return f'Mentor: {self.mentor.name} - Mentee: {self.mentee.name}'
+
+
+class Session(models.Model):
+    """Model to store mentoring sessions"""
+    SESSION_TYPE_CHOICES = [
+        ('virtual', 'Virtual'),
+        ('physical', 'Physical'),
+    ]
+    
+    session_id = models.AutoField(primary_key=True)
+    mentor = models.ForeignKey(Participant, related_name='created_sessions', on_delete=models.CASCADE)
+    session_type = models.CharField(max_length=10, choices=SESSION_TYPE_CHOICES)
+    date_time = models.DateTimeField()
+    meeting_link = models.URLField(blank=True, null=True)  # For virtual sessions
+    location = models.TextField(blank=True, null=True)  # For physical sessions
+    summary = models.TextField()
+    participants = models.ManyToManyField(Participant, related_name='participating_sessions')
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    def __str__(self):
+        return f'Session by {self.mentor.name} on {self.date_time}'
+        
+    def clean(self):
+        # Validate that either meeting_link or location is provided based on session_type
+        if self.session_type == 'virtual' and not self.meeting_link:
+            raise ValidationError("Meeting link is required for virtual sessions")
+        if self.session_type == 'physical' and not self.location:
+            raise ValidationError("Location is required for physical sessions")
