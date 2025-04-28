@@ -63,3 +63,16 @@ class Participant(models.Model):
 
     def __str__(self):
         return f'{self.name} ({self.registration_no})'
+
+
+class MentorMenteeRelationship(models.Model):
+    """Model to track mentor-mentee relationships"""
+    mentor = models.ForeignKey(Participant, related_name='mentees_relationship', on_delete=models.CASCADE)
+    mentee = models.ForeignKey(Participant, related_name='mentor_relationship', on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = ('mentor', 'mentee')  # Prevent duplicate relationships
+        
+    def __str__(self):
+        return f'Mentor: {self.mentor.name} - Mentee: {self.mentee.name}'

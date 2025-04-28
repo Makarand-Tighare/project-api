@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Participant
+from .models import Participant, MentorMenteeRelationship
 
 class ParticipantAdmin(admin.ModelAdmin):
     # Fields to display in the list view in the admin interface
@@ -55,4 +55,10 @@ class ParticipantAdmin(admin.ModelAdmin):
     display_proof_of_internships.short_description = 'Proof of Internships'
     display_proof_of_extracurricular_activities.short_description = 'Proof of Extracurricular Activities'
 
+class MentorMenteeRelationshipAdmin(admin.ModelAdmin):
+    list_display = ('mentor', 'mentee', 'created_at')
+    search_fields = ('mentor__name', 'mentee__name', 'mentor__registration_no', 'mentee__registration_no')
+    list_filter = ('created_at',)
+
 admin.site.register(Participant, ParticipantAdmin)
+admin.site.register(MentorMenteeRelationship, MentorMenteeRelationshipAdmin)

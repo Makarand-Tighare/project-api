@@ -3,10 +3,11 @@ import json
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from .models import Participant
+from .models import Participant, MentorMenteeRelationship
 from .serializers import ParticipantSerializer
 from collections import defaultdict
 from itertools import cycle
+from django.db import transaction
 
 @api_view(['POST'])
 def create_participant(request):
@@ -244,6 +245,36 @@ def match_participants(request):
         return Response({"error": "No participants found"}, status=status.HTTP_404_NOT_FOUND)
 
     matches = match_mentors_mentees(students)
+    
+    # Save relationships to database
+    try:
+        with transaction.atomic():
+            # Clear existing relationships (optional - remove if you want to keep historical matches)
+            MentorMenteeRelationship.objects.all().delete()
+            
+            # Create new relationships
+            for match in matches:
+                mentor_reg_no = match['mentor']['registration_no']
+                mentee_reg_no = match['mentee']['registration_no']
+                
+                try:
+                    mentor = Participant.objects.get(registration_no=mentor_reg_no)
+                    mentee = Participant.objects.get(registration_no=mentee_reg_no)
+                    
+                    # Create the relationship
+                    MentorMenteeRelationship.objects.create(
+                        mentor=mentor,
+                        mentee=mentee
+                    )
+                except Participant.DoesNotExist:
+                    # Skip if either mentor or mentee doesn't exist
+                    continue
+    except Exception as e:
+        return Response({
+            "error": "Failed to save mentor-mentee relationships",
+            "details": str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
     return Response({"matches": matches})
 
 @api_view(['DELETE'])
@@ -261,3 +292,15 @@ def delete_all_participants(request):
             "error": "Failed to delete participants",
             "details": str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+@api_view(['GET'])
+def get_participant_profile(request, registration_no):
+    """Get a participant's profile with mentor/mentee relationships."""
+    try:
+        participant = Participant.objects.get(registration_no=registration_no)
+        serializer = ParticipantSerializer(participant)
+        return Response(serializer.data)
+    except Participant.DoesNotExist:
+        return Response({"error": "Participant not found"}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

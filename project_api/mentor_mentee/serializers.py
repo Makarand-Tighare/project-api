@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.core.exceptions import ValidationError
-from .models import Participant
+from .models import Participant, MentorMenteeRelationship
 
 # Validator for file size
 def validate_file_size(file):
@@ -8,10 +8,46 @@ def validate_file_size(file):
     if file.size > limit:
         raise ValidationError('File size should not exceed 5 MB.')
 
+class MentorInfoSerializer(serializers.ModelSerializer):
+    """Serializer for basic mentor information"""
+    class Meta:
+        model = Participant
+        fields = ('name', 'registration_no', 'semester', 'branch', 'tech_stack')
+
+class MenteeInfoSerializer(serializers.ModelSerializer):
+    """Serializer for basic mentee information"""
+    class Meta:
+        model = Participant
+        fields = ('name', 'registration_no', 'semester', 'branch', 'tech_stack')
+
 class ParticipantSerializer(serializers.ModelSerializer):
+    # Add fields for mentor and mentees
+    mentor = serializers.SerializerMethodField()
+    mentees = serializers.SerializerMethodField()
+    
     class Meta:
         model = Participant
         fields = '__all__'
+
+    def get_mentor(self, obj):
+        """Get the mentor for this participant (if they are a mentee)"""
+        try:
+            relationship = MentorMenteeRelationship.objects.filter(mentee=obj).first()
+            if relationship:
+                return MentorInfoSerializer(relationship.mentor).data
+            return None
+        except Exception:
+            return None
+    
+    def get_mentees(self, obj):
+        """Get the mentees for this participant (if they are a mentor)"""
+        try:
+            relationships = MentorMenteeRelationship.objects.filter(mentor=obj)
+            if relationships:
+                return MenteeInfoSerializer([rel.mentee for rel in relationships], many=True).data
+            return []
+        except Exception:
+            return []
 
     def create(self, validated_data):
         # Validate and save 'proof_of_research_publications'
