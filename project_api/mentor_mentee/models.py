@@ -10,7 +10,6 @@ class Participant(models.Model):
     HACKATHON_ROLE_CHOICES = [('team leader', 'Team Leader'), ('member', 'Member')]
     YES_NO_CHOICES = [('yes', 'Yes'), ('no', 'No')]
     LEVEL_CHOICES = [('International', 'International'), ('National', 'National'), ('College', 'College'), ('Conferences', 'Conferences'), ('None', 'None')]
-    LEARNING_STYLE_CHOICES = [('Hands_on', 'Hands-on'), ('Project_based', 'Project-based'), ('Discuss_oriented', 'Discuss-oriented')]
 
     # Personal Information
     name = models.CharField(max_length=100)
@@ -58,13 +57,6 @@ class Participant(models.Model):
     extracurricular_activities = models.CharField(max_length=3, choices=YES_NO_CHOICES,blank=True, null=True)
     describe_extracurricular_activities = models.TextField(blank=True, null=True)
     proof_of_extracurricular_activities = models.BinaryField(blank=True, null=True)  # Store the file as a BLOB
-
-    # Personal Development
-    short_term_goals = models.TextField(blank=True, null=True)
-    long_term_goals = models.TextField(blank=True, null=True)
-    strengths_and_weaknesses = models.TextField(blank=True, null=True)
-    preferred_learning_style = models.CharField(max_length=20, choices=LEARNING_STYLE_CHOICES)
-    areas_for_personal_growth = models.TextField(blank=True, null=True)
 
     # Miscellaneous
     date = models.DateTimeField(auto_now_add=True)

@@ -39,11 +39,6 @@ class Command(BaseCommand):
                 extracurricular_activities=row.get('extracurricular_activities', None),
                 describe_extracurricular_activities=row.get('describe_extracurricular_activities', None),
                 proof_of_extracurricular_activities=row.get('proof_of_extracurricular_activities', None),
-                short_term_goals=row.get('short_term_goals', None),
-                long_term_goals=row.get('long_term_goals', None),
-                strengths_and_weaknesses=row.get('strengths_and_weaknesses', None),
-                preferred_learning_style=row['preferred_learning_style'],
-                areas_for_personal_growth=row.get('areas_for_personal_growth', None),
                 date=pd.to_datetime(row['date'])
             )
             # Save the participant to the database

@@ -115,11 +115,6 @@ class ParticipantSerializer(serializers.ModelSerializer):
         instance.describe_seminars_or_workshops = validated_data.get('describe_seminars_or_workshops', instance.describe_seminars_or_workshops)
         instance.extracurricular_activities = validated_data.get('extracurricular_activities', instance.extracurricular_activities)
         instance.describe_extracurricular_activities = validated_data.get('describe_extracurricular_activities', instance.describe_extracurricular_activities)
-        instance.short_term_goals = validated_data.get('short_term_goals', instance.short_term_goals)
-        instance.long_term_goals = validated_data.get('long_term_goals', instance.long_term_goals)
-        instance.strengths_and_weaknesses = validated_data.get('strengths_and_weaknesses', instance.strengths_and_weaknesses)
-        instance.preferred_learning_style = validated_data.get('preferred_learning_style', instance.preferred_learning_style)
-        instance.areas_for_personal_growth = validated_data.get('areas_for_personal_growth', instance.areas_for_personal_growth)
-
+        
         instance.save()
         return instance

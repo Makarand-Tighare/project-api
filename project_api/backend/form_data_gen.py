@@ -41,8 +41,7 @@ columns = [
     "number_of_internships", "internship_description", "proof_of_internships", 
     "seminars_or_workshops_attended", "describe_seminars_or_workshops", 
     "extracurricular_activities", "describe_extracurricular_activities", 
-    "proof_of_extracurricular_activities", "short_term_goals", "long_term_goals", 
-    "strengths_and_weaknesses", "preferred_learning_style", "areas_for_personal_growth", 
+    "proof_of_extracurricular_activities",
     "date"
 ]
 
@@ -92,29 +91,6 @@ for _ in range(150):
             "Chess Club member", "Volunteered at NGOs", "Participated in cultural fests", None
         ]),
         
-        "short_term_goals": random.choice([
-            "Get a research position in AI", "Lead a tech startup", "Pursue a career in Data Science", 
-            "Develop an open-source project", "Become a tech lead", "Win a hackathon", 
-            "Publish a research paper", "Master a new programming language"
-        ]),
-        "long_term_goals": random.choice([
-            "Get a research position in AI", "Lead a tech startup", "Pursue a career in Data Science", 
-            "Become a CTO", "Build a SaaS product", "Contribute to global tech policies", 
-            "Work on space exploration tech", "Teach at a reputed university"
-        ]),
-        "strengths_and_weaknesses": random.choice([
-            "Smart but Lazy", "Good at teamwork", "Overthinker", "Quick Learner", "Detail-oriented", 
-            "Procrastinator", "Strong communicator", "Prefers working solo", "Handles pressure well", 
-            "Needs better time management"
-        ]),
-        "preferred_learning_style": random.choice([
-            "Project-based learning", "Discussion-oriented", "Self-paced learning", "Hands-on workshops", 
-            "Video tutorials", "Reading documentation", "Group learning", "Mentorship-driven"
-        ]),
-        "areas_for_personal_growth": random.choice([
-            "DSA", "Leadership", "Everything", "Public Speaking", "Networking", "Team Management", 
-            "Critical Thinking", "Emotional Intelligence", "Time Management", "Coding Best Practices"
-        ]),
         "date": pd.Timestamp.now().strftime("%Y-%m-%d"),
     }
     records.append(record)
