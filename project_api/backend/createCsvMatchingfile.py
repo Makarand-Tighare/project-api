@@ -1,8 +1,8 @@
 import csv
 import requests
 
-# API request (replace with actual API URL)
-url = 'http://127.0.0.1:5000/match'  # Replace with your API URL
+# API request - using Django endpoint instead of Flask
+url = 'http://127.0.0.1:8000/api/mentor_mentee/match/'
 response = requests.get(url)
 data = response.json()
 
@@ -13,49 +13,59 @@ print(data)
 mentor_mentees = {}
 
 for match in data['matches']:
-    mentor, mentee = match
+    mentor_details = match['mentor']
+    mentee_details = match['mentee']
     
-    # Fetch mentor details
-    mentor_details = next((item for item in data['matches'] if item['name'] == mentor), None)
-    mentee_details = next((item for item in data['matches'] if item['name'] == mentee), None)
+    mentor_name = mentor_details['name']
+    mentee_name = mentee_details['name']
+
+    if mentor_name not in mentor_mentees:
+        mentor_mentees[mentor_name] = {
+            "mentorRegNo": mentor_details.get("registration_no", "Unknown"),
+            "mentorSemester": mentor_details.get("semester", "Unknown"),
+            "mentees": []
+        }
     
-    if mentor not in mentor_mentees:
-        mentor_mentees[mentor] = []
-    
-    # Store the details of mentor and mentee
-    mentor_mentees[mentor].append({
-        "mentee": mentee,
-        "mentorRegNo": mentor_details.get("registration_no", "Unknown"),
-        "mentorSemester": mentor_details.get("semester", "Unknown"),
-        "mentorTechStack": mentor_details.get("tech_stack", "Unknown"),
-        "mentorCGPA": mentor_details.get("cgpa", "Unknown"),
+    # Store only name, registration number, and semester for mentees
+    mentor_mentees[mentor_name]["mentees"].append({
+        "menteeName": mentee_name,
         "menteeRegNo": mentee_details.get("registration_no", "Unknown"),
-        "menteeSemester": mentee_details.get("semester", "Unknown"),
-        "menteeTechStack": mentee_details.get("tech_stack", "Unknown"),
-        "menteeCGPA": mentee_details.get("cgpa", "Unknown")
+        "menteeSemester": mentee_details.get("semester", "Unknown")
     })
 
 # Write to CSV file
 with open('mentor_mentee_matches.csv', mode='w', newline='') as file:
     writer = csv.writer(file)
     writer.writerow([
-        'Mentor', 'Mentor Reg No', 'Mentor Semester', 'Mentor Tech Stack', 'Mentor CGPA',
-        'Mentee', 'Mentee Reg No', 'Mentee Semester', 'Mentee Tech Stack', 'Mentee CGPA'
+        'Mentor', 'Mentor Reg No', 'Mentor Semester',
+        'Mentee', 'Mentee Reg No', 'Mentee Semester'
     ])  # Header
     
-    for mentor, mentees in mentor_mentees.items():
-        for mentee in mentees:
-            writer.writerow([
-                mentor, 
-                mentee['mentorRegNo'], 
-                mentee['mentorSemester'], 
-                mentee['mentorTechStack'], 
-                mentee['mentorCGPA'],
-                mentee['mentee'], 
-                mentee['menteeRegNo'], 
-                mentee['menteeSemester'], 
-                mentee['menteeTechStack'], 
-                mentee['menteeCGPA']
-            ])
+    for mentor_name, mentor_data in mentor_mentees.items():
+        mentor_written = False
+        
+        for mentee in mentor_data["mentees"]:
+            if not mentor_written:
+                # Write mentor info with first mentee
+                writer.writerow([
+                    mentor_name, 
+                    mentor_data['mentorRegNo'], 
+                    mentor_data['mentorSemester'],
+                    mentee['menteeName'], 
+                    mentee['menteeRegNo'], 
+                    mentee['menteeSemester']
+                ])
+                mentor_written = True
+            else:
+                # Write only mentee info for subsequent mentees
+                writer.writerow([
+                    "", "", "",  # Empty cells for mentor columns
+                    mentee['menteeName'], 
+                    mentee['menteeRegNo'], 
+                    mentee['menteeSemester']
+                ])
+        
+        # Add a blank row after each mentor's mentees
+        writer.writerow(["", "", "", "", "", ""])
 
 print("CSV file created successfully!")
