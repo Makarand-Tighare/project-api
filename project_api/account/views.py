@@ -1,6 +1,7 @@
 import os
 import random
 import requests
+import json
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.views import APIView
@@ -135,3 +136,45 @@ class UserPasswordResetView(APIView):
     serializer = UserPasswordResetSerializer(data=request.data, context={'uid':uid, 'token':token})
     serializer.is_valid(raise_exception=True)
     return Response({'msg':'Password Reset Successfully'}, status=status.HTTP_200_OK)
+
+# Add a new class for profile updates
+class UserProfileUpdateView(APIView):
+  renderer_classes = [UserRenderer]
+  permission_classes = [IsAuthenticated]
+  
+  def patch(self, request, format=None):
+    try:
+      # Get the user object
+      user = request.user
+      
+      # Use request.data which is already parsed by DRF
+      data = request.data
+      
+      # Update fields if they exist in the request
+      if 'first_name' in data:
+        user.first_name = data['first_name']
+      if 'last_name' in data:
+        user.last_name = data['last_name']
+      if 'mobile_number' in data:
+        user.mobile_number = data['mobile_number']
+      if 'section' in data:
+        user.section = data['section']
+      if 'year' in data:
+        user.year = data['year']
+      if 'semester' in data:
+        user.semester = data['semester']
+      
+      # Save the updated user
+      user.save()
+      
+      # Return the updated user data
+      serializer = UserProfileSerializer(user)
+      return Response({
+        'msg': 'Profile updated successfully',
+        'user': serializer.data
+      }, status=status.HTTP_200_OK)
+    
+    except Exception as e:
+      return Response({
+        'error': str(e)
+      }, status=status.HTTP_400_BAD_REQUEST)

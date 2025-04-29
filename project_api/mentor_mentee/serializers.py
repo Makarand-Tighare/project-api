@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.core.exceptions import ValidationError
-from .models import Participant, MentorMenteeRelationship, Session
+from .models import Participant, MentorMenteeRelationship, Session, QuizResult
 
 # Validator for file size
 def validate_file_size(file):
@@ -210,3 +210,15 @@ class SessionSerializer(serializers.ModelSerializer):
                     pass  # Skip if participant doesn't exist
         
         return session
+
+class QuizResultSerializer(serializers.ModelSerializer):
+    participant_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = QuizResult
+        fields = ['id', 'participant', 'participant_name', 'quiz_topic', 'score', 'total_questions', 
+                  'percentage', 'quiz_date', 'quiz_data', 'quiz_answers', 'result_details']
+        read_only_fields = ['quiz_date']
+    
+    def get_participant_name(self, obj):
+        return obj.participant.name if obj.participant else None

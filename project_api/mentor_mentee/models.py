@@ -1,6 +1,7 @@
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.core.exceptions import ValidationError
+import uuid
 
 
 class Participant(models.Model):
@@ -104,3 +105,33 @@ class Session(models.Model):
             raise ValidationError("Meeting link is required for virtual sessions")
         if self.session_type == 'physical' and not self.location:
             raise ValidationError("Location is required for physical sessions")
+
+
+class QuizResult(models.Model):
+    """Model to store quiz results for mentees"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('completed', 'Completed'),
+        ('expired', 'Expired')
+    ]
+    
+    id = models.AutoField(primary_key=True)
+    participant = models.ForeignKey('Participant', on_delete=models.CASCADE, related_name='quiz_results')
+    mentor = models.ForeignKey('Participant', on_delete=models.SET_NULL, related_name='assigned_quizzes', null=True, blank=True)
+    quiz_topic = models.CharField(max_length=255)
+    score = models.IntegerField()
+    total_questions = models.IntegerField()
+    percentage = models.FloatField()
+    quiz_date = models.DateTimeField(auto_now_add=True)
+    quiz_data = models.JSONField(null=True, blank=True)  # Store the original quiz
+    quiz_answers = models.JSONField(null=True, blank=True)  # Store user answers
+    result_details = models.JSONField(null=True, blank=True)  # Store detailed results
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    completed_date = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-quiz_date']
+    
+    def __str__(self):
+        status_text = f" ({self.status})" if self.status != 'completed' else f" - {self.percentage}%"
+        return f"{self.participant.name}'s quiz on {self.quiz_topic}{status_text}"
