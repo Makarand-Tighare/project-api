@@ -191,12 +191,23 @@ def evaluate_student(student):
     return score
 
 def has_common_interests(mentor, mentee):
-    """Check if mentor and mentee share common tech stack or areas of interest."""
+    """
+    Check if mentor and mentee share common tech stack or areas of interest.
+    Takes into account interest priorities of both mentor and mentee.
+    """
     # Handle possible nan or empty values
     mentor_tech = mentor['tech_stack'] if 'tech_stack' in mentor and mentor['tech_stack'] and mentor['tech_stack'] != 'nan' else ''
     mentee_tech = mentee['tech_stack'] if 'tech_stack' in mentee and mentee['tech_stack'] and mentee['tech_stack'] != 'nan' else ''
     mentor_interest = mentor['areas_of_interest'] if 'areas_of_interest' in mentor and mentor['areas_of_interest'] and mentor['areas_of_interest'] != 'nan' else ''
     mentee_interest = mentee['areas_of_interest'] if 'areas_of_interest' in mentee and mentee['areas_of_interest'] and mentee['areas_of_interest'] != 'nan' else ''
+    
+    # Get prioritized interests
+    mentor_pref1 = mentor.get('interest_preference1', '')
+    mentor_pref2 = mentor.get('interest_preference2', '')
+    mentor_pref3 = mentor.get('interest_preference3', '')
+    mentee_pref1 = mentee.get('interest_preference1', '')
+    mentee_pref2 = mentee.get('interest_preference2', '')
+    mentee_pref3 = mentee.get('interest_preference3', '')
     
     # Split by comma and clean up spaces
     mentor_tech_stack = set(tech.strip() for tech in mentor_tech.split(',')) if mentor_tech else set()
@@ -226,16 +237,45 @@ def has_common_interests(mentor, mentee):
                     partial_matches.add((m_int, s_int))
         common_interests = partial_matches
     
-    return common_tech, common_interests
+    # Calculate preference match score (higher is better)
+    preference_score = 0
+    
+    # Check if mentor's preferences match mentee's interests/tech
+    if mentor_pref1 and (mentor_pref1 in mentee_interests or any(mentor_pref1 in tech for tech in mentee_tech_stack)):
+        preference_score += 10  # Highest priority match
+    if mentor_pref2 and (mentor_pref2 in mentee_interests or any(mentor_pref2 in tech for tech in mentee_tech_stack)):
+        preference_score += 6   # Medium priority match
+    if mentor_pref3 and (mentor_pref3 in mentee_interests or any(mentor_pref3 in tech for tech in mentee_tech_stack)):
+        preference_score += 3   # Lower priority match
+    
+    # Check if mentee's preferences match mentor's interests/tech
+    if mentee_pref1 and (mentee_pref1 in mentor_interests or any(mentee_pref1 in tech for tech in mentor_tech_stack)):
+        preference_score += 10  # Highest priority match
+    if mentee_pref2 and (mentee_pref2 in mentor_interests or any(mentee_pref2 in tech for tech in mentor_tech_stack)):
+        preference_score += 6   # Medium priority match
+    if mentee_pref3 and (mentee_pref3 in mentor_interests or any(mentee_pref3 in tech for tech in mentor_tech_stack)):
+        preference_score += 3   # Lower priority match
+    
+    # Combine all findings
+    return common_tech, common_interests, preference_score
 
 def match_mentors_mentees(students):
-    """Match mentors with mentees dynamically - ensuring ALL students are classified and matched."""
+    """
+    Match mentors with mentees dynamically - ensuring ALL students are classified and matched.
+    
+    This function can handle both initial matching of all participants and 
+    incremental matching of new participants.
+    """
     MAX_MENTEES_PER_MENTOR = 4  # Target number of mentees per mentor (3-5)
     mentors = []
     mentees = []
     matches = []
     unclassified = []
 
+    # If there are very few students to match (like 1 or 2), we may need to supplement
+    # them with existing matched participants to create proper mentor/mentee roles
+    is_small_batch = len(students) <= 3
+    
     # First pass: Classify based on mentoring_preferences, score, and semester
     for student in students:
         # Try to respect mentoring_preferences if specified
@@ -256,18 +296,25 @@ def match_mentors_mentees(students):
         # Sort by score (highest first)
         unclassified.sort(key=lambda s: s['score'], reverse=True)
         
-        # Determine how many mentors we need based on remaining mentees
-        needed_mentors = max(1, (len(mentees) + len(unclassified)) // MAX_MENTEES_PER_MENTOR)
-        needed_mentors -= len(mentors)  # Adjust for existing mentors
-        
-        if needed_mentors > 0:
-            # Take top scoring students as mentors
-            new_mentors = unclassified[:needed_mentors]
-            mentors.extend(new_mentors)
-            unclassified = unclassified[needed_mentors:]
-        
-        # Rest become mentees
-        mentees.extend(unclassified)
+        # Special case for small batches - put them all as mentees if possible
+        if is_small_batch and len(mentors) == 0:
+            # For small batches with no declared mentors, prioritize making them mentees
+            # We will try to match them with existing mentors later
+            mentees.extend(unclassified)
+        else:
+            # Normal case: determine mentors based on scores
+            # Determine how many mentors we need based on remaining mentees
+            needed_mentors = max(1, (len(mentees) + len(unclassified)) // MAX_MENTEES_PER_MENTOR)
+            needed_mentors -= len(mentors)  # Adjust for existing mentors
+            
+            if needed_mentors > 0:
+                # Take top scoring students as mentors
+                new_mentors = unclassified[:needed_mentors]
+                mentors.extend(new_mentors)
+                unclassified = unclassified[needed_mentors:]
+            
+            # Rest become mentees
+            mentees.extend(unclassified)
     
     # Calculate mentor scores for later use
     for mentor in mentors:
@@ -276,8 +323,11 @@ def match_mentors_mentees(students):
     # Sort mentors by their evaluated score (highest first)
     mentors.sort(key=lambda m: m['score'], reverse=True)
     
-    # If we have too few mentors, convert some high-scoring mentees
-    if len(mentors) < len(mentees) / MAX_MENTEES_PER_MENTOR:
+    # For small batches, if we have only mentees, we'll need to handle them specially later
+    small_batch_mentees_only = is_small_batch and len(mentors) == 0 and len(mentees) > 0
+   
+    # If we have too few mentors, convert some high-scoring mentees (unless it's a small batch)
+    if not small_batch_mentees_only and len(mentors) < len(mentees) / MAX_MENTEES_PER_MENTOR:
         # Calculate how many additional mentors needed
         needed_mentors = max(1, len(mentees) // MAX_MENTEES_PER_MENTOR - len(mentors))
         
@@ -295,6 +345,27 @@ def match_mentors_mentees(students):
         # Remove these from mentees list
         mentee_reg_nos_to_remove = [m['registration_no'] for m in new_mentors]
         mentees = [m for m in mentees if m['registration_no'] not in mentee_reg_nos_to_remove]
+    
+    # Special case for small batches with only mentees - return them as unmatched
+    # They will be matched by the view function with existing mentors in the database
+    if small_batch_mentees_only:
+        return {
+            "matches": [],
+            "unmatched_mentees": mentees,
+            "statistics": {
+                "total_participants": len(students),
+                "total_mentees": len(mentees),
+                "total_mentors": 0,
+                "participants_matched": 0,
+                "match_quality_counts": {
+                    "high": 0,
+                    "medium": 0,
+                    "low": 0,
+                    "assigned": 0,
+                    "peer_mentor": 0
+                }
+            }
+        }
     
     # Final check to ensure we have mentors
     if not mentors:
@@ -322,7 +393,7 @@ def match_mentors_mentees(students):
                 continue
                 
             # Get common interests
-            common_tech, common_interests = has_common_interests(mentor, mentee)
+            common_tech, common_interests, preference_score = has_common_interests(mentor, mentee)
             
             # Calculate match score based on common interests
             tech_score = len(common_tech) * 3  # Weight tech stack higher
@@ -332,8 +403,11 @@ def match_mentors_mentees(students):
             # Same branch is a plus
             branch_score = 2 if mentor.get('branch') == mentee.get('branch') else 0
             
+            # Prioritize preference matches heavily
+            preference_match_score = preference_score * 2  # Double weight for explicit preferences
+            
             # Total compatibility score
-            compatibility_score = tech_score + interest_score + branch_score
+            compatibility_score = tech_score + interest_score + branch_score + preference_match_score
             
             match_scores.append({
                 'mentor': mentor,
@@ -341,8 +415,9 @@ def match_mentors_mentees(students):
                 'score': compatibility_score,
                 'common_tech': common_tech,
                 'common_interests': common_interests,
-                'compatibility': "high" if compatibility_score >= 5 else 
-                                 "medium" if compatibility_score >= 2 else "low"
+                'preference_score': preference_score,
+                'compatibility': "high" if compatibility_score >= 15 else 
+                                 "medium" if compatibility_score >= 7 else "low"
             })
     
     # Sort match scores by compatibility score (highest first)
@@ -377,7 +452,8 @@ def match_mentors_mentees(students):
             },
             "match_quality": match['compatibility'],
             "common_tech": list(match['common_tech']),
-            "common_interests": list(match['common_interests'])
+            "common_interests": list(match['common_interests']),
+            "preference_score": match['preference_score']
         })
         
         matched_mentees.add(mentee['registration_no'])
@@ -422,7 +498,8 @@ def match_mentors_mentees(students):
                     },
                     "match_quality": "assigned",
                     "common_tech": [],
-                    "common_interests": []
+                    "common_interests": [],
+                    "preference_score": 0
                 })
                 
                 matched_mentees.add(mentee['registration_no'])
@@ -462,7 +539,8 @@ def match_mentors_mentees(students):
                 },
                 "match_quality": "peer-mentor",
                 "common_tech": [],
-                "common_interests": []
+                "common_interests": [],
+                "preference_score": 0
             })
             
             mentor_mentee_count[lead_mentor['registration_no']] += 1
@@ -502,7 +580,8 @@ def match_mentors_mentees(students):
                         },
                         "match_quality": "peer-mentor",
                         "common_tech": [],
-                        "common_interests": []
+                        "common_interests": [],
+                        "preference_score": 0
                     })
                     
                     mentor_mentee_count[best_mentor['registration_no']] += 1
@@ -537,15 +616,35 @@ def match_mentors_mentees(students):
 
 @api_view(['GET'])
 def match_participants(request):
-    """Endpoint to trigger mentor-mentee matching."""
+    """Endpoint to trigger mentor-mentee matching for new/unmatched participants only."""
+    # Get all participants
     participants = Participant.objects.all()
     serializer = ParticipantSerializer(participants, many=True)
     students = serializer.data
     
     if not students:
         return Response({"error": "No participants found"}, status=status.HTTP_404_NOT_FOUND)
-
-    matches = match_mentors_mentees(students)
+        
+    # Get participants who are already in relationships
+    mentors_in_relationships = MentorMenteeRelationship.objects.values_list('mentor__registration_no', flat=True).distinct()
+    mentees_in_relationships = MentorMenteeRelationship.objects.values_list('mentee__registration_no', flat=True).distinct()
+    
+    # Identify participants who already have relationships
+    matched_reg_nos = set(mentors_in_relationships) | set(mentees_in_relationships)
+    
+    # Find unmatched participants
+    unmatched_students = [s for s in students if s['registration_no'] not in matched_reg_nos]
+    
+    # Check if we have any unmatched participants
+    if not unmatched_students:
+        return Response({
+            "message": "All participants are already matched",
+            "matched_count": len(matched_reg_nos),
+            "total_count": len(students)
+        }, status=status.HTTP_200_OK)
+    
+    # Now call the matching algorithm but ONLY for unmatched participants
+    matches = match_mentors_mentees(unmatched_students)
     
     # Check if there was an error in matching
     if isinstance(matches, dict) and 'error' in matches:
@@ -554,22 +653,106 @@ def match_participants(request):
     # Save relationships to database
     try:
         with transaction.atomic():
-            # Clear existing relationships (optional - remove if you want to keep historical matches)
-            MentorMenteeRelationship.objects.all().delete()
+            # Special case: If we have unmatched mentees but no new mentors,
+            # try to match them with existing mentors in the database
+            if 'unmatched_mentees' in matches and matches['unmatched_mentees']:
+                unmatched_mentees = matches['unmatched_mentees']
+                
+                # Get existing mentors who might be able to take on more mentees
+                existing_mentors = []
+                for mentor_reg_no in mentors_in_relationships:
+                    # Count how many mentees this mentor already has
+                    mentee_count = MentorMenteeRelationship.objects.filter(
+                        mentor__registration_no=mentor_reg_no
+                    ).count()
+                    
+                    # If they have capacity for more mentees, add them to our list
+                    if mentee_count < 4:  # MAX_MENTEES_PER_MENTOR
+                        mentor = Participant.objects.get(registration_no=mentor_reg_no)
+                        existing_mentors.append({
+                            'registration_no': mentor_reg_no,
+                            'name': mentor.name,
+                            'branch': mentor.branch,
+                            'semester': mentor.semester,
+                            'tech_stack': mentor.tech_stack,
+                            'current_mentee_count': mentee_count
+                        })
+                
+                # If we have existing mentors with capacity, assign the unmatched mentees
+                if existing_mentors:
+                    # Sort mentors by current mentee count (ascending)
+                    existing_mentors.sort(key=lambda m: m['current_mentee_count'])
+                    
+                    # Create matches for unmatched mentees
+                    for mentee_data in unmatched_mentees:
+                        # Get the mentor with the fewest mentees
+                        mentor_data = existing_mentors[0]
+                        
+                        # Create the relationship
+                        mentor = Participant.objects.get(registration_no=mentor_data['registration_no'])
+                        mentee = Participant.objects.get(registration_no=mentee_data['registration_no'])
+                        
+                        MentorMenteeRelationship.objects.create(
+                            mentor=mentor,
+                            mentee=mentee,
+                            manually_created=False
+                        )
+                        
+                        # Update the mentor's mentee count
+                        mentor_data['current_mentee_count'] += 1
+                        
+                        # Re-sort the mentors list
+                        existing_mentors.sort(key=lambda m: m['current_mentee_count'])
+                        
+                        # Add to matches for response
+                        matches['matches'].append({
+                            "mentor": {
+                                "name": mentor_data['name'],
+                                "registration_no": mentor_data['registration_no'],
+                                "semester": mentor_data['semester'],
+                                "branch": mentor_data['branch'],
+                                "tech_stack": mentor_data['tech_stack']
+                            },
+                            "mentee": {
+                                "name": mentee_data['name'],
+                                "registration_no": mentee_data['registration_no'],
+                                "semester": mentee_data['semester'],
+                                "branch": mentee_data['branch'],
+                                "tech_stack": mentee_data['tech_stack']
+                            },
+                            "match_quality": "assigned-to-existing",
+                            "common_tech": [],
+                            "common_interests": [],
+                            "preference_score": 0
+                        })
             
-            # Create new relationships
+            # Create new relationships from the algorithm
             for match in matches['matches']:
                 mentor_reg_no = match['mentor']['registration_no']
                 mentee_reg_no = match['mentee']['registration_no']
+                
+                # Skip if a relationship already exists
+                if MentorMenteeRelationship.objects.filter(
+                    mentor__registration_no=mentor_reg_no, 
+                    mentee__registration_no=mentee_reg_no
+                ).exists():
+                    continue
+                
+                # Skip if mentee already has a relationship
+                if MentorMenteeRelationship.objects.filter(
+                    mentee__registration_no=mentee_reg_no
+                ).exists():
+                    continue
                 
                 try:
                     mentor = Participant.objects.get(registration_no=mentor_reg_no)
                     mentee = Participant.objects.get(registration_no=mentee_reg_no)
                     
-                    # Create the relationship
+                    # Create the relationship (flag as auto-generated)
                     MentorMenteeRelationship.objects.create(
                         mentor=mentor,
-                        mentee=mentee
+                        mentee=mentee,
+                        manually_created=False
                     )
                 except Participant.DoesNotExist:
                     # Skip if either mentor or mentee doesn't exist
@@ -579,17 +762,24 @@ def match_participants(request):
             "error": "Failed to save mentor-mentee relationships",
             "details": str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    # Get all relationships for a complete response
+    all_relationships = MentorMenteeRelationship.objects.all()
+    total_relationships = all_relationships.count()
+    manual_relationships = all_relationships.filter(manually_created=True).count()
+    auto_relationships = all_relationships.filter(manually_created=False).count()
+    newly_created = len(matches['matches'])
         
     return Response({
-        "matches": matches['matches'],
-        "participants_matched": matches['statistics']['participants_matched'],
-        "total_participants": matches['statistics']['total_participants'],
-        "match_quality": {
-            "interest_based": len([m for m in matches['matches'] if m['match_quality'] == 'interest-based']),
-            "assigned": len([m for m in matches['matches'] if m['match_quality'] == 'assigned']),
-            "peer_mentor": len([m for m in matches['matches'] if m['match_quality'] == 'peer-mentor'])
+        "message": f"Successfully matched {newly_created} new participants",
+        "newly_matched": newly_created,
+        "total_relationships": total_relationships,
+        "relationship_types": {
+            "manual": manual_relationships,
+            "automatic": auto_relationships
         },
-        "statistics": matches['statistics']
+        "new_matches": matches['matches'],
+        "statistics": matches.get('statistics', {})
     })
 
 @api_view(['DELETE'])
@@ -801,14 +991,25 @@ def create_relationship(request):
             return Response({
                 "error": "This mentor-mentee relationship already exists"
             }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Delete any existing relationships where this participant is a mentee
+        # This ensures a mentee can only have one mentor at a time
+        existing_relationships = MentorMenteeRelationship.objects.filter(mentee=mentee)
+        if existing_relationships.exists():
+            old_mentors = [rel.mentor.name for rel in existing_relationships]
+            existing_relationships.delete()
+            replaced_msg = f"Replaced previous mentor(s): {', '.join(old_mentors)}"
+        else:
+            replaced_msg = None
             
         # Create the relationship
         relationship = MentorMenteeRelationship.objects.create(
             mentor=mentor,
-            mentee=mentee
+            mentee=mentee,
+            manually_created=True
         )
         
-        return Response({
+        response_data = {
             "message": "Relationship created successfully",
             "relationship": {
                 "id": relationship.id,
@@ -821,7 +1022,12 @@ def create_relationship(request):
                     "registration_no": mentee.registration_no
                 }
             }
-        }, status=status.HTTP_201_CREATED)
+        }
+        
+        if replaced_msg:
+            response_data["note"] = replaced_msg
+            
+        return Response(response_data, status=status.HTTP_201_CREATED)
         
     except Exception as e:
         return Response({

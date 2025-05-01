@@ -1,5 +1,5 @@
 from django.db import models
-from django.contrib.auth.models import BaseUserManager,AbstractBaseUser
+from django.contrib.auth.models import BaseUserManager,AbstractBaseUser, PermissionsMixin
 from account.choise import *
 
 # Create your models here.
@@ -41,7 +41,7 @@ class StudentManager(BaseUserManager):
     user.save()
     return user
 
-class Student(AbstractBaseUser):
+class Student(AbstractBaseUser,PermissionsMixin):
   
   email = models.EmailField(
       verbose_name='Email',

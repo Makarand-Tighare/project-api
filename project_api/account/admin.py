@@ -13,7 +13,7 @@ class StudentModelAdmin(BaseUserAdmin):
   fieldsets = (
       ('User Credentials', {'fields': ('email', 'password')}),
       ('Personal info', {'fields': ('first_name','middle_name', 'last_name','mobile_number','section','year','semester','linkedin_access_token',)}),
-      ('Permissions', {'fields': ('is_admin','is_active', 'is_mentor',)}),
+      ('Permissions', {'fields': ('is_admin','is_active', 'is_mentor','groups',)}),
   )
   # add_fieldsets is not a standard ModelAdmin attribute. StudentModelAdmin
   # overrides get_fieldsets to use this attribute when creating a user.
@@ -25,7 +25,7 @@ class StudentModelAdmin(BaseUserAdmin):
   )
   search_fields = ('reg_no',)
   ordering = ('reg_no', 'id')
-  filter_horizontal = ()
+  filter_horizontal = ('groups', 'user_permissions')
 
 
 # Now register the new StudentModelAdmin...

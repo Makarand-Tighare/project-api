@@ -21,6 +21,11 @@ class Participant(models.Model):
     previous_mentoring_experience = models.TextField(blank=True, null=True)
     tech_stack = models.TextField()
     areas_of_interest = models.TextField()
+    
+    # Interest Preferences (in order of priority)
+    interest_preference1 = models.CharField(max_length=100, blank=True, null=True)
+    interest_preference2 = models.CharField(max_length=100, blank=True, null=True)
+    interest_preference3 = models.CharField(max_length=100, blank=True, null=True)
 
     # Research
     published_research_papers = models.CharField(max_length=15, choices=LEVEL_CHOICES, default='None')
@@ -71,6 +76,7 @@ class MentorMenteeRelationship(models.Model):
     mentor = models.ForeignKey(Participant, related_name='mentees_relationship', on_delete=models.CASCADE)
     mentee = models.ForeignKey(Participant, related_name='mentor_relationship', on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
+    manually_created = models.BooleanField(default=True)  # Set to True for manually created relationships
     
     class Meta:
         unique_together = ('mentor', 'mentee')  # Prevent duplicate relationships
