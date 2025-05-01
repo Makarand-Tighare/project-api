@@ -1,9 +1,10 @@
 from django.contrib import admin
-from django.urls import path,include
+from django.urls import path, include
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/user/',include('account.urls')),
-    path('api/mentor_mentee/',include('mentor_mentee.urls')),
-    path('api/utility/',include('projectUtility.urls')),
+    path('api/user/', include('account.urls')),
+    path('api/admin/', include('account.admin_urls')),  # Admin API endpoints
+    path('api/mentor_mentee/', include('mentor_mentee.urls')),
+    path('api/utility/', include('projectUtility.urls')),
 ]

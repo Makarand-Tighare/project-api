@@ -1249,7 +1249,7 @@ def generate_quiz(request):
 
     # Compose the Gemini prompt
     gemini_prompt = (
-        f"Generate a quiz with {num_questions} multiple-choice questions on the topic: '{prompt}'. "
+        f"Generate a quiz with {num_questions} multiple-choice questions on the topic: '{prompt}' and description: '{description}'. "
         "For each question, provide 4 options (A, B, C, D), indicate the correct answer, and provide a short explanation. "
         "Return the JSON array directly WITHOUT ANY TEXT INTRODUCTION OR CODE BLOCK FORMATTING. "
         "Required JSON format: ["

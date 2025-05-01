@@ -15,14 +15,87 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 from account.models import Student
 from account.utils import Util
+from dotenv import load_dotenv
+from account.permissions import IsAdminUser
+
+# Load environment variables
+load_dotenv()
 
 # Generate Token Manually
 def get_tokens_for_user(user):
   refresh = RefreshToken.for_user(user)
+  # Add claims to the token
+  refresh['is_admin'] = user.is_admin
+  
   return {
       'refresh': str(refresh),
       'access': str(refresh.access_token),
   }
+
+# Admin login view
+class AdminLoginView(APIView):
+  renderer_classes = [UserRenderer]
+  def post(self, request, format=None):
+    try:
+      email = request.data.get('email')
+      password = request.data.get('password')
+      
+      print(f"Admin login attempt: {email}")  # Debug logging
+      
+      # Special case for hardcoded admin credentials
+      if email == "ycce_ct_admin@gmail.com":
+        # Get or create the admin user to ensure it exists
+        try:
+          admin_user = Student.objects.get(email=email)
+          # Verify password directly for the special admin
+          if not admin_user.check_password(password):
+            return Response({
+              'errors': {'non_field_errors': ['Invalid password for admin account']}
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        except Student.DoesNotExist:
+          # This should not happen if create_admin.py is run
+          return Response({
+            'errors': {'non_field_errors': ['Admin account does not exist']}
+          }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Admin user exists and password is valid
+        if not admin_user.is_admin:
+          admin_user.is_admin = True
+          admin_user.save()
+          print(f"Updated user {email} to admin status.")
+          
+        token = get_tokens_for_user(admin_user)
+        return Response({
+          'token': token,
+          'msg': 'Admin Login Success',
+          'is_admin': True
+        }, status=status.HTTP_200_OK)
+      
+      # Regular admin authentication flow
+      user = authenticate(email=email, password=password)
+      
+      if user is not None:
+        # Check if user is an admin
+        if user.is_admin:
+          token = get_tokens_for_user(user)
+          return Response({
+            'token': token,
+            'msg': 'Admin Login Success',
+            'is_admin': True
+          }, status=status.HTTP_200_OK)
+        else:
+          return Response({
+            'errors': {'non_field_errors': ['You are not authorized as an admin']}
+          }, status=status.HTTP_403_FORBIDDEN)
+      else:
+        return Response({
+          'errors': {'non_field_errors': ['Email or Password is not Valid']}
+        }, status=status.HTTP_401_UNAUTHORIZED)
+    except Exception as e:
+      print(f"Admin login error: {str(e)}")  # Debug logging
+      return Response({
+        'errors': {'non_field_errors': [str(e)]}
+      }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class UserRegistrationView(APIView):
   renderer_classes = [UserRenderer]
@@ -178,3 +251,37 @@ class UserProfileUpdateView(APIView):
       return Response({
         'error': str(e)
       }, status=status.HTTP_400_BAD_REQUEST)
+
+# Example of an admin-only view
+class AdminDashboardView(APIView):
+  permission_classes = [IsAuthenticated, IsAdminUser]
+  
+  def get(self, request, format=None):
+    """
+    Admin dashboard endpoint that retrieves system statistics and metrics
+    only available to admin users.
+    """
+    try:
+      # Get total number of users
+      total_users = Student.objects.count()
+      active_users = Student.objects.filter(is_active=True).count()
+      
+      # Get count of mentors
+      mentors = Student.objects.filter(is_mentor=True).count()
+      
+      # Return dashboard data
+      return Response({
+        'stats': {
+          'total_users': total_users,
+          'active_users': active_users,
+          'mentors': mentors,
+        },
+        'admin_info': {
+          'user_email': request.user.email,
+          'admin_since': request.user.created_at.strftime('%Y-%m-%d'),
+        }
+      }, status=status.HTTP_200_OK)
+    except Exception as e:
+      return Response({
+        'error': str(e)
+      }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
