@@ -116,7 +116,7 @@ class SendOTPView(APIView):
         request.session['otp'] = otp
         request.session['otp_email'] = email
         request.session['otp_expires_at'] = timezone.now().strftime('%Y-%m-%d %H:%M:%S')
-
+        print(f"OTP sent to {email}: {otp}")  # Debug logging
         body = f'Your OTP Code code is {otp}\n\nOtp is valid for 10 min only'
         data = {
           'subject':'Verify your account',

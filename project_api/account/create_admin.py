@@ -1,10 +1,3 @@
-import os
-import django
-
-# Set up Django environment
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'project_api.settings')
-django.setup()
-
 from account.models import Student
 
 def create_admin_user():
