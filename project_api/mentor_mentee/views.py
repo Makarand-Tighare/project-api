@@ -806,12 +806,37 @@ def match_participants(request):
         department_filter = user.department
         print(f"Department admin matching for department: {department_filter.name}")
         
+        # Check if there are pending approvals for this department
+        pending_approvals_count = Participant.objects.filter(
+            approval_status='pending',
+            department=department_filter
+        ).count()
+        
+        if pending_approvals_count > 0:
+            return Response({
+                "error": "Approval required before matching",
+                "message": f"There are {pending_approvals_count} participants pending approval in your department",
+                "action_required": "Please approve or reject pending participants before matching",
+                "pending_count": pending_approvals_count
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
         # Get APPROVED participants only from this department
         participants = Participant.objects.filter(
             approval_status='approved',
             department=department_filter
         )
     else:
+        # Check if there are pending approvals overall
+        pending_approvals_count = Participant.objects.filter(approval_status='pending').count()
+        
+        if pending_approvals_count > 0:
+            return Response({
+                "error": "Approval required before matching",
+                "message": f"There are {pending_approvals_count} participants pending approval",
+                "action_required": "Please approve or reject pending participants before matching",
+                "pending_count": pending_approvals_count
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
         # Get all APPROVED participants
         participants = Participant.objects.filter(approval_status='approved')
     
@@ -822,7 +847,7 @@ def match_participants(request):
         return Response({
             "error": "No approved participants found",
             "message": "All participants need to be approved by an admin before matching"
-        }, status=status.HTTP_404_NOT_FOUND)
+        }, status=status.HTTP_400_BAD_REQUEST)  # Changed from 404 to 400
         
     # Get participants who are already in relationships
     if department_filter:
@@ -1226,14 +1251,42 @@ def list_all_relationships(request):
             department_filter = user.department
             print(f"Department admin filtering for department: {department_filter.name}")
             
+            # Check if there are pending approvals for this department
+            pending_approvals_count = Participant.objects.filter(
+                approval_status='pending',
+                department=department_filter
+            ).count()
+            
+            if pending_approvals_count > 0:
+                return Response({
+                    "error": "Approval required before viewing relationships",
+                    "message": f"There are {pending_approvals_count} participants pending approval in your department",
+                    "action_required": "Please approve or reject pending participants first",
+                    "pending_count": pending_approvals_count
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
             # Get relationships where either mentor or mentee is in this department
-            department_participants = Participant.objects.filter(department=department_filter)
+            department_participants = Participant.objects.filter(
+                department=department_filter,
+                approval_status='approved'
+            )
             participant_ids = [p.registration_no for p in department_participants]
             
             relationships = MentorMenteeRelationship.objects.filter(
                 mentor__registration_no__in=participant_ids
             )
         else:
+            # Check if there are pending approvals overall
+            pending_approvals_count = Participant.objects.filter(approval_status='pending').count()
+            
+            if pending_approvals_count > 0:
+                return Response({
+                    "error": "Approval required before viewing relationships",
+                    "message": f"There are {pending_approvals_count} participants pending approval",
+                    "action_required": "Please approve or reject pending participants first",
+                    "pending_count": pending_approvals_count
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
             # Regular admin or non-logged in user gets all relationships
             relationships = MentorMenteeRelationship.objects.all()
             
@@ -1295,6 +1348,38 @@ def create_relationship(request):
                 "error": "Both mentor_registration_no and mentee_registration_no are required"
             }, status=status.HTTP_400_BAD_REQUEST)
             
+        # Check if the user is a department admin with department restrictions
+        user = request.user
+        department_filter = None
+        
+        if hasattr(user, 'is_department_admin') and user.is_department_admin and user.department:
+            department_filter = user.department
+            
+            # Check if there are pending approvals for this department
+            pending_approvals_count = Participant.objects.filter(
+                approval_status='pending',
+                department=department_filter
+            ).count()
+            
+            if pending_approvals_count > 0:
+                return Response({
+                    "error": "Approval required before creating relationships",
+                    "message": f"There are {pending_approvals_count} participants pending approval in your department",
+                    "action_required": "Please approve or reject pending participants first",
+                    "pending_count": pending_approvals_count
+                }, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            # Check if there are pending approvals overall
+            pending_approvals_count = Participant.objects.filter(approval_status='pending').count()
+            
+            if pending_approvals_count > 0:
+                return Response({
+                    "error": "Approval required before creating relationships",
+                    "message": f"There are {pending_approvals_count} participants pending approval",
+                    "action_required": "Please approve or reject pending participants first",
+                    "pending_count": pending_approvals_count
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
         # Verify both participants exist
         try:
             mentor = Participant.objects.get(registration_no=mentor_reg_no)
@@ -1304,11 +1389,23 @@ def create_relationship(request):
                 "error": "One or both participants not found"
             }, status=status.HTTP_404_NOT_FOUND)
             
-        # Check if the user is a department admin with department restrictions
-        user = request.user
-        if hasattr(user, 'is_department_admin') and user.is_department_admin and user.department:
-            department_filter = user.department
+        # Check if participants are approved
+        if mentor.approval_status != 'approved':
+            return Response({
+                "error": f"Mentor (registration no: {mentor_reg_no}) is not approved",
+                "current_status": mentor.approval_status,
+                "action_required": "Please approve the mentor before creating the relationship"
+            }, status=status.HTTP_400_BAD_REQUEST)
             
+        if mentee.approval_status != 'approved':
+            return Response({
+                "error": f"Mentee (registration no: {mentee_reg_no}) is not approved",
+                "current_status": mentee.approval_status,
+                "action_required": "Please approve the mentee before creating the relationship"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Department restriction check for department admins
+        if department_filter:
             # Verify both participants are from the department admin's department
             if (mentor.department and mentor.department.id != department_filter.id) or \
                (mentee.department and mentee.department.id != department_filter.id):
@@ -1489,12 +1586,65 @@ def delete_relationship(request, relationship_id):
 def list_unmatched_participants(request):
     """List all participants who don't have any mentor-mentee relationships."""
     try:
-        # Get all participants
-        all_participants = Participant.objects.all()
+        # Check if the user is a department admin
+        user = request.user
+        department_filter = None
+        
+        # If this is a department admin, they should only see participants from their department
+        if hasattr(user, 'is_department_admin') and user.is_department_admin and user.department:
+            department_filter = user.department
+            print(f"Department admin filtering unmatched participants for department: {department_filter.name}")
+            
+            # Check if there are pending approvals for this department
+            pending_approvals_count = Participant.objects.filter(
+                approval_status='pending',
+                department=department_filter
+            ).count()
+            
+            if pending_approvals_count > 0:
+                return Response({
+                    "error": "Approval required before viewing unmatched participants",
+                    "message": f"There are {pending_approvals_count} participants pending approval in your department",
+                    "action_required": "Please approve or reject pending participants first",
+                    "pending_count": pending_approvals_count
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get all approved participants from this department
+            all_participants = Participant.objects.filter(
+                department=department_filter,
+                approval_status='approved'
+            )
+        else:
+            # Check if there are pending approvals overall
+            pending_approvals_count = Participant.objects.filter(approval_status='pending').count()
+            
+            if pending_approvals_count > 0:
+                return Response({
+                    "error": "Approval required before viewing unmatched participants",
+                    "message": f"There are {pending_approvals_count} participants pending approval",
+                    "action_required": "Please approve or reject pending participants first",
+                    "pending_count": pending_approvals_count
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Regular admin or non-logged in user gets all approved participants
+            all_participants = Participant.objects.filter(approval_status='approved')
         
         # Get all participants who are mentors or mentees in a relationship
-        mentors_in_relationships = MentorMenteeRelationship.objects.values_list('mentor', flat=True).distinct()
-        mentees_in_relationships = MentorMenteeRelationship.objects.values_list('mentee', flat=True).distinct()
+        if department_filter:
+            # For department admin, only consider relationships in their department
+            department_participants = all_participants.values_list('registration_no', flat=True)
+            
+            mentors_in_relationships = MentorMenteeRelationship.objects.filter(
+                mentor__registration_no__in=department_participants
+            ).values_list('mentor', flat=True).distinct()
+            
+            mentees_in_relationships = MentorMenteeRelationship.objects.filter(
+                mentee__registration_no__in=department_participants
+            ).values_list('mentee', flat=True).distinct()
+        else:
+            # For regular admin, consider all relationships
+            mentors_in_relationships = MentorMenteeRelationship.objects.values_list('mentor', flat=True).distinct()
+            mentees_in_relationships = MentorMenteeRelationship.objects.values_list('mentee', flat=True).distinct()
         
         # Combine the two lists to get all participants in relationships
         matched_reg_nos = set(mentors_in_relationships) | set(mentees_in_relationships)
@@ -1505,12 +1655,21 @@ def list_unmatched_participants(request):
         # Serialize the unmatched participants
         serializer = ParticipantSerializer(unmatched_participants, many=True)
         
-        # Return response with additional information
-        return Response({
+        # Add department info to response
+        response_data = {
             "count": unmatched_participants.count(),
             "total_participants": all_participants.count(),
             "unmatched_participants": serializer.data
-        })
+        }
+        
+        if department_filter:
+            response_data["department_filter"] = {
+                "id": department_filter.id,
+                "name": department_filter.name,
+                "code": department_filter.code
+            }
+            
+        return Response(response_data)
         
     except Exception as e:
         return Response({

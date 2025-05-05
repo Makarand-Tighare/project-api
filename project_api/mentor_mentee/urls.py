@@ -33,18 +33,15 @@ urlpatterns = [
     path('leaderboard/calculate/', views.calculate_leaderboard_points, name='calculate_leaderboard_points'),
     path('leaderboard/sync/', views.sync_leaderboard_points, name='sync_leaderboard_points'),
     
-    # Mentor-mentee matching
+    # Mentor-mentee matching and relationship management
     path('match/', views.match_participants, name='match_participants'),
     path('delete_all/', views.delete_all_participants, name='delete_all_participants'),
     path('profile/<str:registration_no>/', views.get_participant_profile, name='get_participant_profile'),
     path('unmatched/', views.list_unmatched_participants, name='list_unmatched_participants'),
-    
-    # Relationship management
     path('relationships/list/', views.list_all_relationships, name='list_all_relationships'),
     path('relationships/create/', views.create_relationship, name='create_relationship'),
     path('relationships/update/<int:relationship_id>/', views.update_relationship, name='update_relationship'),
     path('relationships/delete/<int:relationship_id>/', views.delete_relationship, name='delete_relationship'),
-    path('participants/unmatched/', views.list_unmatched_participants, name='list_unmatched_participants'),
     
     # LinkedIn integration
     path('linkedin/post/', views.linkedin_post, name='linkedin_post'),
