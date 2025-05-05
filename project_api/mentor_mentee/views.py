@@ -850,6 +850,7 @@ def match_participants(request):
         # Get APPROVED participants only from this department
         participants = Participant.objects.filter(
             approval_status='approved',
+            status='active',
             department=department_filter
         )
     else:
@@ -865,7 +866,7 @@ def match_participants(request):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Get all APPROVED participants
-        participants = Participant.objects.filter(approval_status='approved')
+        participants = Participant.objects.filter(approval_status='approved',status='active')
     
     serializer = ParticipantSerializer(participants, many=True)
     students = serializer.data
@@ -1463,6 +1464,20 @@ def create_relationship(request):
                 "error": f"Mentee (registration no: {mentee_reg_no}) is not approved",
                 "current_status": mentee.approval_status,
                 "action_required": "Please approve the mentee before creating the relationship"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if mentor.status != 'active':
+            return Response({
+                "error": f"Mentor (registration no: {mentor_reg_no}) is not active",
+                "current_status": mentor.status,
+                "action_required": "Please ensure the mentor is active before creating the relationship"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if mentee.status != 'active':
+            return Response({
+                "error": f"Mentee (registration no: {mentee_reg_no}) is not active",
+                "current_status": mentee.status,
+                "action_required": "Please ensure the mentee is active before creating the relationship"
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Department restriction check for department admins
