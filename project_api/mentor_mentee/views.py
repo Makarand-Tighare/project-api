@@ -15,6 +15,7 @@ import datetime
 from django.db import models
 from account.models import Student  # Import Student model for email lookup
 from django.utils import timezone
+from django.http import HttpResponse, Http404
 
 load_dotenv()
 
@@ -3967,3 +3968,44 @@ def send_feedback_reminders(request):
             'error': 'Failed to send feedback reminders',
             'details': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+def view_proof(request, registration_no, proof_type):
+    """
+    Django view to serve proof files (stored as BLOB) for a participant.
+    Supports dynamic content type based on optional 'filetype' GET parameter.
+    Usage: /participant/<registration_no>/proof/<proof_type>/?filetype=pdf|png|jpeg
+    """
+    from .models import Participant
+    # Get the participant or return 404
+    try:
+        participant = Participant.objects.get(registration_no=registration_no)
+    except Participant.DoesNotExist:
+        raise Http404("Participant not found.")
+
+    # Map proof_type to the correct field
+    proof_field = {
+        'research': participant.proof_of_research_publications,
+        'hackathon': participant.proof_of_hackathon_participation,
+        'coding': participant.proof_of_coding_competitions,
+        'academic': participant.proof_of_academic_performance,
+        'internship': participant.proof_of_internships,
+        'extracurricular': participant.proof_of_extracurricular_activities,
+    }.get(proof_type)
+
+    if not proof_field:
+        raise Http404("Proof not found.")
+
+    # Determine content type from GET param or default to PDF
+    filetype = request.GET.get('filetype', 'pdf').lower()
+    content_types = {
+        'pdf': 'application/pdf',
+        'png': 'image/png',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+    }
+    content_type = content_types.get(filetype, 'application/pdf')
+
+    # Optionally, set Content-Disposition for inline display
+    response = HttpResponse(proof_field, content_type=content_type)
+    response['Content-Disposition'] = f'inline; filename="{proof_type}_proof_{registration_no}.{filetype}"'
+    return response

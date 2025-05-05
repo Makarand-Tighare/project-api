@@ -1,7 +1,10 @@
 from django.urls import path
 from . import views
+from .views import view_proof
 
 urlpatterns = [
+
+    path('participant/<str:registration_no>/proof/<str:proof_type>/', view_proof, name='view_proof'),
     # Existing participant endpoints
     path('participants/create/', views.create_participant, name='create_participant'),
     path('participants/list/', views.list_participants, name='list_participants'),
