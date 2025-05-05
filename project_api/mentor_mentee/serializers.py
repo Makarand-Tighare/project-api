@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from django.core.exceptions import ValidationError
 from .models import Participant, MentorMenteeRelationship, Session, QuizResult, Badge, ParticipantBadge
+from account.models import Department
+from account.serializers import DepartmentSerializer
 
 # Validator for file size
 def validate_file_size(file):
@@ -11,19 +13,25 @@ def validate_file_size(file):
 class MentorInfoSerializer(serializers.ModelSerializer):
     """Serializer for basic mentor information"""
     mentee_count = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()
     
     def get_mentee_count(self, obj):
         return MentorMenteeRelationship.objects.filter(mentor=obj).count()
+    
+    def get_department_name(self, obj):
+        return obj.department.name if obj.department else None
     
     class Meta:
         model = Participant
         fields = ['name', 'registration_no', 'semester', 'branch', 
                   'tech_stack', 'areas_of_interest', 'mentee_count',
-                  'badges_earned', 'is_super_mentor', 'leaderboard_points', 'status']
+                  'badges_earned', 'is_super_mentor', 'leaderboard_points', 'status',
+                  'department', 'department_name']
 
 class MenteeInfoSerializer(serializers.ModelSerializer):
     """Serializer for basic mentee information"""
     mentor = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()
     
     def get_mentor(self, obj):
         relationship = MentorMenteeRelationship.objects.filter(mentee=obj).first()
@@ -34,16 +42,22 @@ class MenteeInfoSerializer(serializers.ModelSerializer):
             }
         return None
     
+    def get_department_name(self, obj):
+        return obj.department.name if obj.department else None
+    
     class Meta:
         model = Participant
         fields = ['name', 'registration_no', 'semester', 'branch', 
                   'tech_stack', 'areas_of_interest', 'mentor',
-                  'badges_earned', 'leaderboard_points', 'status']
+                  'badges_earned', 'leaderboard_points', 'status',
+                  'department', 'department_name']
 
 class ParticipantSerializer(serializers.ModelSerializer):
     # Add fields for mentor and mentees
     mentor = serializers.SerializerMethodField()
     mentees = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()
+    department_details = serializers.SerializerMethodField()
     
     class Meta:
         model = Participant
@@ -68,8 +82,29 @@ class ParticipantSerializer(serializers.ModelSerializer):
             return []
         except Exception:
             return []
+            
+    def get_department_name(self, obj):
+        return obj.department.name if obj.department else None
+        
+    def get_department_details(self, obj):
+        if obj.department:
+            return {
+                'id': obj.department.id,
+                'name': obj.department.name,
+                'code': obj.department.code
+            }
+        return None
 
     def create(self, validated_data):
+        # Check for department data
+        department_id = self.initial_data.get('department_id')
+        if department_id:
+            try:
+                department = Department.objects.get(id=department_id)
+                validated_data['department'] = department
+            except Department.DoesNotExist:
+                pass
+        
         # Validate and save 'proof_of_research_publications'
         if 'proof_of_research_publications' in self.initial_data:
             file = self.initial_data['proof_of_research_publications']
@@ -110,6 +145,15 @@ class ParticipantSerializer(serializers.ModelSerializer):
         return Participant.objects.create(**validated_data)
 
     def update(self, instance, validated_data):
+        # Check for department data
+        department_id = self.initial_data.get('department_id')
+        if department_id:
+            try:
+                department = Department.objects.get(id=department_id)
+                instance.department = department
+            except Department.DoesNotExist:
+                pass
+                
         # Validate and update 'proof_of_research_publications'
         if 'proof_of_research_publications' in self.initial_data:
             file = self.initial_data['proof_of_research_publications']
@@ -181,9 +225,14 @@ class ParticipantSerializer(serializers.ModelSerializer):
 
 class ParticipantInfoSerializer(serializers.ModelSerializer):
     """Simple serializer for participant information in sessions"""
+    department_name = serializers.SerializerMethodField()
+    
     class Meta:
         model = Participant
-        fields = ('name', 'registration_no', 'semester', 'branch')
+        fields = ('name', 'registration_no', 'semester', 'branch', 'department', 'department_name')
+        
+    def get_department_name(self, obj):
+        return obj.department.name if obj.department else None
 
 
 class SessionSerializer(serializers.ModelSerializer):

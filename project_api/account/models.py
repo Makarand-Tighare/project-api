@@ -4,9 +4,19 @@ from account.choise import *
 
 # Create your models here.
 
+class Department(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    code = models.CharField(max_length=10, unique=True)
+    description = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
 #  Custom User Manager
 class StudentManager(BaseUserManager):
-  def create_user(self, email, first_name,last_name,mobile_number,reg_no,section,year,semester, password=None, password2=None):
+  def create_user(self, email, first_name, last_name, mobile_number, reg_no, section, year, semester, department=None, password=None, password2=None):
       """
       Creates and saves a User with the given email, name, tc and password.
       """
@@ -22,6 +32,7 @@ class StudentManager(BaseUserManager):
           section=section,
           year=year,
           semester=semester,
+          department=department,
       )
 
       user.set_password(password)
@@ -56,9 +67,11 @@ class Student(AbstractBaseUser,PermissionsMixin):
   section = models.CharField(max_length=1,choices=SECTION_CHOICES)
   semester = models.CharField(max_length=1,choices=SEMESTER_CHOICES)
   year = models.CharField(max_length=1,choices=YEAR_CHOICES)
+  department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, related_name='students')
   is_active = models.BooleanField(default=True)
   is_mentor = models.BooleanField(default=False)
   is_admin = models.BooleanField(default=False)
+  is_department_admin = models.BooleanField(default=False)  # New field for department admin
   created_at = models.DateTimeField(auto_now_add=True)
   updated_at = models.DateTimeField(auto_now=True)
 
@@ -87,3 +100,17 @@ class Student(AbstractBaseUser,PermissionsMixin):
       "Is the user a member of staff?"
       # Simplest possible answer: All admins are staff
       return self.is_admin
+      
+# Department-specific participant model
+class DepartmentParticipant(models.Model):
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='department_participations')
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name='participants')
+    registration_date = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+    additional_info = models.JSONField(blank=True, null=True)  # Flexible field for department-specific data
+    
+    class Meta:
+        unique_together = ('student', 'department')  # Prevent duplicate enrollments
+        
+    def __str__(self):
+        return f"{self.student.email} - {self.department.name}"

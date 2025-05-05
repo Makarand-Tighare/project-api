@@ -37,10 +37,41 @@ def create_participant(request):
 
 @api_view(['GET'])
 def list_participants(request):
-    if request.method == 'GET':
-        participants = Participant.objects.all()
+    """List all participants"""
+    try:
+        # Check if the user is a department admin
+        user = request.user
+        department_filter = None
+        
+        # If this is a department admin, they should only see participants from their department
+        if hasattr(user, 'is_department_admin') and user.is_department_admin and user.department:
+            department_filter = user.department
+            print(f"Department admin filtering for department: {department_filter.name}")
+            
+            # Get participants only from this department
+            participants = Participant.objects.filter(department=department_filter)
+        else:
+            # Regular admin or non-logged in user gets all participants
+            participants = Participant.objects.all()
+            
         serializer = ParticipantSerializer(participants, many=True)
-        return Response(serializer.data)
+        
+        # Add department info to response
+        response_data = {
+            'participants': serializer.data,
+            'count': participants.count()
+        }
+        
+        if department_filter:
+            response_data['department_filter'] = {
+                'id': department_filter.id,
+                'name': department_filter.name,
+                'code': department_filter.code
+            }
+            
+        return Response(response_data)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # Function to get LinkedIn user profile
 def get_linkedin_user_id(access_token):
@@ -347,6 +378,58 @@ def match_mentors_mentees(students):
     
     # Continue with matching using only approved participants
     students = approved_students
+    
+    # Ensure all students have department_id if at least one does
+    # This will help with department-restricted matching
+    has_department = any('department_id' in s for s in students)
+    
+    if has_department:
+        # Group by department_id
+        departments = {}
+        for student in students:
+            dept_id = student.get('department_id')
+            if dept_id not in departments:
+                departments[dept_id] = []
+            departments[dept_id].append(student)
+            
+        # If we have multiple departments, handle each separately
+        if len(departments) > 1:
+            all_matches = []
+            for dept_id, dept_students in departments.items():
+                # Skip empty departments (shouldn't happen but just in case)
+                if not dept_students:
+                    continue
+                    
+                print(f"Matching students in department ID: {dept_id}")
+                dept_matches = perform_matching(dept_students)
+                
+                # Handle error cases
+                if isinstance(dept_matches, dict) and 'error' in dept_matches:
+                    # Continue with other departments
+                    print(f"Error matching department {dept_id}: {dept_matches['error']}")
+                    continue
+                    
+                all_matches.extend(dept_matches)
+                
+            # Return the combined matches
+            return {
+                'matches': all_matches,
+                'statistics': {
+                    'total_departments': len(departments),
+                    'departments_matched': sum(1 for dept_id in departments if departments[dept_id])
+                }
+            }
+    
+    # If we have a single department or no department info, proceed normally
+    return perform_matching(students)
+    
+def perform_matching(students):
+    """Helper function that does the actual matching algorithm"""
+    MAX_MENTEES_PER_MENTOR = 4  # Target number of mentees per mentor (3-5)
+    mentors = []
+    mentees = []
+    matches = []
+    unclassified = []
 
     # If there are very few students to match (like 1 or 2), we may need to supplement
     # them with existing matched participants to create proper mentor/mentee roles
@@ -714,8 +797,24 @@ def match_mentors_mentees(students):
 @api_view(['GET'])
 def match_participants(request):
     """Endpoint to trigger mentor-mentee matching for new/unmatched participants only."""
-    # Get all APPROVED participants
-    participants = Participant.objects.filter(approval_status='approved')
+    # Get the requesting user for department filtering
+    user = request.user
+    department_filter = None
+    
+    # If this is a department admin, they should only match participants from their department
+    if hasattr(user, 'is_department_admin') and user.is_department_admin and user.department:
+        department_filter = user.department
+        print(f"Department admin matching for department: {department_filter.name}")
+        
+        # Get APPROVED participants only from this department
+        participants = Participant.objects.filter(
+            approval_status='approved',
+            department=department_filter
+        )
+    else:
+        # Get all APPROVED participants
+        participants = Participant.objects.filter(approval_status='approved')
+    
     serializer = ParticipantSerializer(participants, many=True)
     students = serializer.data
     
@@ -726,8 +825,22 @@ def match_participants(request):
         }, status=status.HTTP_404_NOT_FOUND)
         
     # Get participants who are already in relationships
-    mentors_in_relationships = MentorMenteeRelationship.objects.values_list('mentor__registration_no', flat=True).distinct()
-    mentees_in_relationships = MentorMenteeRelationship.objects.values_list('mentee__registration_no', flat=True).distinct()
+    if department_filter:
+        # For department admin, only consider relationships in their department
+        department_participants = Participant.objects.filter(department=department_filter)
+        participant_ids = [p.registration_no for p in department_participants]
+        
+        mentors_in_relationships = MentorMenteeRelationship.objects.filter(
+            mentor__registration_no__in=participant_ids
+        ).values_list('mentor__registration_no', flat=True).distinct()
+        
+        mentees_in_relationships = MentorMenteeRelationship.objects.filter(
+            mentee__registration_no__in=participant_ids
+        ).values_list('mentee__registration_no', flat=True).distinct()
+    else:
+        # For regular admin, consider all relationships
+        mentors_in_relationships = MentorMenteeRelationship.objects.values_list('mentor__registration_no', flat=True).distinct()
+        mentees_in_relationships = MentorMenteeRelationship.objects.values_list('mentee__registration_no', flat=True).distinct()
     
     # Identify participants who already have relationships
     matched_reg_nos = set(mentors_in_relationships) | set(mentees_in_relationships)
@@ -744,6 +857,12 @@ def match_participants(request):
         }, status=status.HTTP_200_OK)
     
     # Now call the matching algorithm but ONLY for unmatched participants
+    # If department_filter is active, only match within same department
+    if department_filter:
+        # Additional check to ensure we're only matching within the same department
+        for student in unmatched_students:
+            student['department_id'] = department_filter.id
+    
     matches = match_mentors_mentees(unmatched_students)
     
     # Check if there was an error in matching
@@ -759,23 +878,35 @@ def match_participants(request):
                 unmatched_mentees = matches['unmatched_mentees']
                 
                 # Get existing mentors who might be able to take on more mentees
+                if department_filter:
+                    # Only get mentors from this department
+                    existing_mentors_qs = Participant.objects.filter(
+                        registration_no__in=mentors_in_relationships,
+                        department=department_filter
+                    )
+                else:
+                    # Get all existing mentors
+                    existing_mentors_qs = Participant.objects.filter(
+                        registration_no__in=mentors_in_relationships
+                    )
+                
                 existing_mentors = []
-                for mentor_reg_no in mentors_in_relationships:
+                for mentor in existing_mentors_qs:
                     # Count how many mentees this mentor already has
                     mentee_count = MentorMenteeRelationship.objects.filter(
-                        mentor__registration_no=mentor_reg_no
+                        mentor__registration_no=mentor.registration_no
                     ).count()
                     
                     # If they have capacity for more mentees, add them to our list
                     if mentee_count < 4:  # MAX_MENTEES_PER_MENTOR
-                        mentor = Participant.objects.get(registration_no=mentor_reg_no)
                         existing_mentors.append({
-                            'registration_no': mentor_reg_no,
+                            'registration_no': mentor.registration_no,
                             'name': mentor.name,
                             'branch': mentor.branch,
                             'semester': mentor.semester,
                             'tech_stack': mentor.tech_stack,
-                            'current_mentee_count': mentee_count
+                            'current_mentee_count': mentee_count,
+                            'department_id': mentor.department.id if mentor.department else None
                         })
                 
                 # If we have existing mentors with capacity, assign the unmatched mentees
@@ -785,12 +916,30 @@ def match_participants(request):
                     
                     # Create matches for unmatched mentees
                     for mentee_data in unmatched_mentees:
+                        # Filter mentors by department if department_filter is active
+                        if department_filter:
+                            available_mentors = [
+                                m for m in existing_mentors 
+                                if m['department_id'] == department_filter.id
+                            ]
+                        else:
+                            available_mentors = existing_mentors
+                            
+                        if not available_mentors:
+                            continue
+                            
                         # Get the mentor with the fewest mentees
-                        mentor_data = existing_mentors[0]
+                        mentor_data = available_mentors[0]
                         
                         # Create the relationship
                         mentor = Participant.objects.get(registration_no=mentor_data['registration_no'])
                         mentee = Participant.objects.get(registration_no=mentee_data['registration_no'])
+                        
+                        # Skip if they're from different departments and department_filter is active
+                        if (department_filter and 
+                            ((mentor.department and mentor.department.id != department_filter.id) or
+                             (mentee.department and mentee.department.id != department_filter.id))):
+                            continue
                         
                         MentorMenteeRelationship.objects.create(
                             mentor=mentor,
@@ -811,14 +960,16 @@ def match_participants(request):
                                 "registration_no": mentor_data['registration_no'],
                                 "semester": mentor_data['semester'],
                                 "branch": mentor_data['branch'],
-                                "tech_stack": mentor_data['tech_stack']
+                                "tech_stack": mentor_data['tech_stack'],
+                                "department_id": mentor_data['department_id']
                             },
                             "mentee": {
                                 "name": mentee_data['name'],
                                 "registration_no": mentee_data['registration_no'],
                                 "semester": mentee_data['semester'],
                                 "branch": mentee_data['branch'],
-                                "tech_stack": mentee_data['tech_stack']
+                                "tech_stack": mentee_data['tech_stack'],
+                                "department_id": mentee_data.get('department_id')
                             },
                             "match_quality": "assigned-to-existing",
                             "common_tech": [],
@@ -848,6 +999,12 @@ def match_participants(request):
                     mentor = Participant.objects.get(registration_no=mentor_reg_no)
                     mentee = Participant.objects.get(registration_no=mentee_reg_no)
                     
+                    # Skip if they're from different departments and department_filter is active
+                    if (department_filter and 
+                        ((mentor.department and mentor.department.id != department_filter.id) or
+                         (mentee.department and mentee.department.id != department_filter.id))):
+                        continue
+                    
                     # Create the relationship (flag as auto-generated)
                     MentorMenteeRelationship.objects.create(
                         mentor=mentor,
@@ -864,13 +1021,24 @@ def match_participants(request):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     # Get all relationships for a complete response
-    all_relationships = MentorMenteeRelationship.objects.all()
+    if department_filter:
+        # For department admin, only get relationships in their department
+        department_participants = Participant.objects.filter(department=department_filter)
+        participant_ids = [p.registration_no for p in department_participants]
+        
+        all_relationships = MentorMenteeRelationship.objects.filter(
+            mentor__registration_no__in=participant_ids
+        )
+    else:
+        # For regular admin, get all relationships
+        all_relationships = MentorMenteeRelationship.objects.all()
+        
     total_relationships = all_relationships.count()
     manual_relationships = all_relationships.filter(manually_created=True).count()
     auto_relationships = all_relationships.filter(manually_created=False).count()
     newly_created = len(matches['matches'])
         
-    return Response({
+    response_data = {
         "message": f"Successfully matched {newly_created} new participants",
         "newly_matched": newly_created,
         "total_relationships": total_relationships,
@@ -880,7 +1048,17 @@ def match_participants(request):
         },
         "new_matches": matches['matches'],
         "statistics": matches.get('statistics', {})
-    })
+    }
+    
+    # Add department info if filtering was applied
+    if department_filter:
+        response_data["department_filter"] = {
+            "id": department_filter.id,
+            "name": department_filter.name,
+            "code": department_filter.code
+        }
+        
+    return Response(response_data)
 
 @api_view(['DELETE'])
 def delete_all_participants(request):
@@ -1037,114 +1215,166 @@ def delete_session(request, session_id):
 
 @api_view(['GET'])
 def list_all_relationships(request):
-    """List all mentor-mentee relationships for admin view."""
+    """Get all mentor-mentee relationships"""
     try:
-        relationships = MentorMenteeRelationship.objects.all()
+        # Check if the user is a department admin
+        user = request.user
+        department_filter = None
         
+        # If this is a department admin, they should only see relationships from their department
+        if hasattr(user, 'is_department_admin') and user.is_department_admin and user.department:
+            department_filter = user.department
+            print(f"Department admin filtering for department: {department_filter.name}")
+            
+            # Get relationships where either mentor or mentee is in this department
+            department_participants = Participant.objects.filter(department=department_filter)
+            participant_ids = [p.registration_no for p in department_participants]
+            
+            relationships = MentorMenteeRelationship.objects.filter(
+                mentor__registration_no__in=participant_ids
+            )
+        else:
+            # Regular admin or non-logged in user gets all relationships
+            relationships = MentorMenteeRelationship.objects.all()
+            
+        # Create detailed response with mentor and mentee info
         result = []
         for rel in relationships:
-            result.append({
-                "id": rel.id,
-                "mentor": {
-                    "name": rel.mentor.name,
-                    "registration_no": rel.mentor.registration_no,
-                    "semester": rel.mentor.semester
-                },
-                "mentee": {
-                    "name": rel.mentee.name,
-                    "registration_no": rel.mentee.registration_no,
-                    "semester": rel.mentee.semester
-                },
-                "created_at": rel.created_at
-            })
+            mentor_data = {
+                'registration_no': rel.mentor.registration_no,
+                'name': rel.mentor.name,
+                'branch': rel.mentor.branch,
+                'semester': rel.mentor.semester,
+                'department_id': rel.mentor.department.id if rel.mentor.department else None,
+                'department_name': rel.mentor.department.name if rel.mentor.department else None
+            }
             
-        return Response(result, status=status.HTTP_200_OK)
+            mentee_data = {
+                'registration_no': rel.mentee.registration_no,
+                'name': rel.mentee.name,
+                'branch': rel.mentee.branch,
+                'semester': rel.mentee.semester,
+                'department_id': rel.mentee.department.id if rel.mentee.department else None,
+                'department_name': rel.mentee.department.name if rel.mentee.department else None
+            }
+            
+            result.append({
+                'id': rel.id,
+                'mentor': mentor_data,
+                'mentee': mentee_data,
+                'created_at': rel.created_at,
+                'manually_created': rel.manually_created
+            })
         
+        # Add department info to response
+        response_data = {
+            'relationships': result,
+            'count': len(result)
+        }
+        
+        if department_filter:
+            response_data['department_filter'] = {
+                'id': department_filter.id,
+                'name': department_filter.name,
+                'code': department_filter.code
+            }
+            
+        return Response(response_data)
     except Exception as e:
-        return Response({
-            "error": "Failed to retrieve relationships",
-            "details": str(e)
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST'])
 def create_relationship(request):
-    """Create a new mentor-mentee relationship manually."""
+    """Create a new mentor-mentee relationship"""
     try:
         mentor_reg_no = request.data.get('mentor_registration_no')
         mentee_reg_no = request.data.get('mentee_registration_no')
         
         if not mentor_reg_no or not mentee_reg_no:
             return Response({
-                "error": "Both mentor and mentee registration numbers are required"
+                "error": "Both mentor_registration_no and mentee_registration_no are required"
             }, status=status.HTTP_400_BAD_REQUEST)
             
+        # Verify both participants exist
         try:
             mentor = Participant.objects.get(registration_no=mentor_reg_no)
             mentee = Participant.objects.get(registration_no=mentee_reg_no)
         except Participant.DoesNotExist:
             return Response({
-                "error": "Mentor or mentee not found"
+                "error": "One or both participants not found"
             }, status=status.HTTP_404_NOT_FOUND)
             
-        # Check if both participants are approved
-        if mentor.approval_status != 'approved':
+        # Check if the user is a department admin with department restrictions
+        user = request.user
+        if hasattr(user, 'is_department_admin') and user.is_department_admin and user.department:
+            department_filter = user.department
+            
+            # Verify both participants are from the department admin's department
+            if (mentor.department and mentor.department.id != department_filter.id) or \
+               (mentee.department and mentee.department.id != department_filter.id):
+                return Response({
+                    "error": "Department admin can only create relationships within their department",
+                    "department": department_filter.name
+                }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Verify they're not the same person
+        if mentor_reg_no == mentee_reg_no:
             return Response({
-                "error": f"Mentor {mentor.name} has not been approved by admin",
-                "current_status": mentor.approval_status
+                "error": "Cannot create a relationship where mentor and mentee are the same person"
             }, status=status.HTTP_400_BAD_REQUEST)
             
-        if mentee.approval_status != 'approved':
-            return Response({
-                "error": f"Mentee {mentee.name} has not been approved by admin",
-                "current_status": mentee.approval_status
-            }, status=status.HTTP_400_BAD_REQUEST)
-            
-        # Check if relationship already exists
-        if MentorMenteeRelationship.objects.filter(mentor=mentor, mentee=mentee).exists():
+        # Check for existing relationship
+        if MentorMenteeRelationship.objects.filter(
+            mentor=mentor, mentee=mentee
+        ).exists():
             return Response({
                 "error": "This mentor-mentee relationship already exists"
             }, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Check if the mentee already has a mentor
+        if MentorMenteeRelationship.objects.filter(mentee=mentee).exists():
+            existing_mentor = MentorMenteeRelationship.objects.get(mentee=mentee).mentor
+            return Response({
+                "error": f"Mentee already has a mentor: {existing_mentor.name} ({existing_mentor.registration_no})",
+                "suggestion": "You can delete the existing relationship first if you want to reassign the mentee"
+            }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Delete any existing relationships where this participant is a mentee
-        # This ensures a mentee can only have one mentor at a time
-        existing_relationships = MentorMenteeRelationship.objects.filter(mentee=mentee)
-        if existing_relationships.exists():
-            old_mentors = [rel.mentor.name for rel in existing_relationships]
-            existing_relationships.delete()
-            replaced_msg = f"Replaced previous mentor(s): {', '.join(old_mentors)}"
-        else:
-            replaced_msg = None
+        # Check if mentor has reached maximum mentees (e.g., 5)
+        mentee_count = MentorMenteeRelationship.objects.filter(mentor=mentor).count()
+        if mentee_count >= 5:  # Maximum mentees per mentor
+            return Response({
+                "error": f"Mentor already has {mentee_count} mentees (maximum allowed)",
+                "suggestion": "Please assign this mentee to another mentor with capacity"
+            }, status=status.HTTP_400_BAD_REQUEST)
             
         # Create the relationship
         relationship = MentorMenteeRelationship.objects.create(
             mentor=mentor,
             mentee=mentee,
-            manually_created=True
+            manually_created=True  # Flag as manually created
         )
         
-        response_data = {
-            "message": "Relationship created successfully",
+        # Return success response with relationship details
+        return Response({
+            "message": "Mentor-mentee relationship created successfully",
             "relationship": {
                 "id": relationship.id,
                 "mentor": {
                     "name": mentor.name,
-                    "registration_no": mentor.registration_no
+                    "registration_no": mentor.registration_no,
+                    "department_name": mentor.department.name if mentor.department else None
                 },
                 "mentee": {
                     "name": mentee.name,
-                    "registration_no": mentee.registration_no
-                }
+                    "registration_no": mentee.registration_no,
+                    "department_name": mentee.department.name if mentee.department else None
+                },
+                "created_at": relationship.created_at
             }
-        }
-        
-        if replaced_msg:
-            response_data["note"] = replaced_msg
-            
-        return Response(response_data, status=status.HTTP_201_CREATED)
-        
+        }, status=status.HTTP_201_CREATED)
     except Exception as e:
         return Response({
-            "error": "Failed to create relationship",
+            "error": "Failed to create mentor-mentee relationship",
             "details": str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

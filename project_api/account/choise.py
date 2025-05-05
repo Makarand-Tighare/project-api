@@ -21,3 +21,18 @@ SEMESTER_CHOICES = [
     ('7','7'),
     ('8','8'),
 ]
+
+# Department choices (you can modify these as needed)
+DEPARTMENT_CHOICES = [
+    ('CSE', 'Computer Science Engineering'),
+    ('CSD', 'Computer Science and Design'),
+    ('AIDS', 'Artificial Intelligence and Data Science'),
+    ('AIML', 'Artificial Intelligence and Machine Learning'),
+    ('CSE-IOT', 'Computer Science Engineering (IoT)'),
+    ('CT', 'Computer Technology'),
+    ('ETC', 'Electronics and Telecommunication Engineering'),
+    ('EE', 'Electrical Engineering'),
+    ('ME', 'Mechanical Engineering'),
+    ('CE', 'Civil Engineering'),
+    ('IT', 'Information Technology'),
+]

@@ -2,11 +2,25 @@ from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.core.exceptions import ValidationError
 import uuid
+from account.models import Department
 
 
 class Participant(models.Model):
     SEMESTER_CHOICES = [(str(i), str(i)) for i in range(1, 9)]
-    BRANCH_CHOICES = [('cse', 'CSE'), ('ct', 'CT'), ('aids', 'AIDS')]
+    # Use department codes as branch choices
+    BRANCH_CHOICES = [
+        ('cse', 'CSE'), 
+        ('ct', 'CT'), 
+        ('aids', 'AIDS'),
+        ('aiml', 'AIML'),
+        ('cse-iot', 'CSE-IOT'),
+        ('etc', 'ETC'),
+        ('ee', 'EE'),
+        ('me', 'ME'),
+        ('ce', 'CE'),
+        ('it', 'IT'),
+        ('csd', 'CSD')
+    ]
     MENTORING_PREFERENCE_CHOICES = [('mentor', 'Mentor'), ('mentee', 'Mentee')]
     HACKATHON_ROLE_CHOICES = [('team leader', 'Team Leader'), ('member', 'Member')]
     YES_NO_CHOICES = [('yes', 'Yes'), ('no', 'No')]
@@ -29,6 +43,8 @@ class Participant(models.Model):
     registration_no = models.CharField(max_length=20, primary_key=True)  # Primary key
     semester = models.CharField(max_length=1, choices=SEMESTER_CHOICES)
     branch = models.CharField(max_length=10, choices=BRANCH_CHOICES)
+    # Add department link
+    department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True, related_name='mentoring_participants')
     mentoring_preferences = models.CharField(max_length=10, choices=MENTORING_PREFERENCE_CHOICES)
     previous_mentoring_experience = models.TextField(blank=True, null=True)
     tech_stack = models.TextField()
@@ -89,6 +105,18 @@ class Participant(models.Model):
 
     def __str__(self):
         return f'{self.name} ({self.registration_no})'
+        
+    def save(self, *args, **kwargs):
+        # Try to map branch to department
+        if not self.department and self.branch:
+            branch_code = self.branch.upper()
+            try:
+                department = Department.objects.filter(code__iexact=branch_code).first()
+                if department:
+                    self.department = department
+            except:
+                pass
+        super().save(*args, **kwargs)
 
 
 class MentorMenteeRelationship(models.Model):
