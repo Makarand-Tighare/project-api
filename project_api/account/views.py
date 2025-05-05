@@ -138,6 +138,15 @@ class UserRegistrationView(APIView):
     else:
       print("No department selected during registration")
       
+    # Send welcome email to the registered user
+    body = f"Welcome {user.first_name} {user.last_name},\n\nThank you for registering with us. Your account has been successfully created.\n\nRegards,\nThe Team VidyaSangam"
+    data = {
+      'subject': 'Welcome to Our Platform',
+      'body': body,
+      'to_email': user.email
+    }
+    Util.send_email(data)
+      
     token = get_tokens_for_user(user)
     return Response({'token':token, 'msg':'Registration Successful'}, status=status.HTTP_201_CREATED)
   

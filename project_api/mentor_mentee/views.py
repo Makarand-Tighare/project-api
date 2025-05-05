@@ -13,10 +13,35 @@ import os
 from dotenv import load_dotenv
 import datetime
 from django.db import models
+from account.models import Student  # Import Student model for email lookup
 
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")  # Use .env or fallback
+
+# Helper function to get email from registration number
+def get_email_by_registration_no(registration_no):
+    """Get a student's email by their registration number"""
+    try:
+        # Try multiple approaches to find the student
+        # First try getting Student by reg_no
+        student = Student.objects.filter(reg_no=registration_no).first()
+        if student:
+            return student.email
+            
+        # If not found, try searching by email directly (in case registration_no is actually an email)
+        if '@' in registration_no:
+            student = Student.objects.filter(email=registration_no).first()
+            if student:
+                return student.email
+                
+        # If no matching student found, return the registration_no as fallback
+        print(f"No student found with registration number or email {registration_no}")
+        return registration_no
+    except Exception as e:
+        # Log the error and return registration_no as fallback
+        print(f"Error finding email for registration number {registration_no}: {str(e)}")
+        return registration_no
 
 @api_view(['POST'])
 def create_participant(request):
@@ -1138,6 +1163,40 @@ def create_session(request):
             # Save session with mentor
             session = serializer.save(mentor=mentor)
             
+            # Send email notifications
+            from account.utils import Util
+            
+            # Get session details for the email
+            session_type = session.session_type
+            date_time = session.date_time.strftime("%Y-%m-%d %H:%M")
+            location_info = session.meeting_link if session_type == 'virtual' else session.location
+            summary = session.summary
+            
+            # Get the mentor's email
+            mentor_email = get_email_by_registration_no(mentor.registration_no)
+            
+            # Send email to the mentor
+            mentor_body = f"Dear {mentor.name},\n\nYou have successfully scheduled a new {session_type} session on {date_time}.\n\nSession details:\n{summary}\n\nLocation/Link: {location_info}\n\nRegards,\nThe Team VidyaSangam"
+            mentor_data = {
+                'subject': 'New Session Scheduled',
+                'body': mentor_body,
+                'to_email': mentor_email
+            }
+            Util.send_email(mentor_data)
+            
+            # Send emails to all participants
+            for participant in session.participants.all():
+                # Get the participant's email
+                participant_email = get_email_by_registration_no(participant.registration_no)
+                
+                participant_body = f"Dear {participant.name},\n\nYou have been invited to a {session_type} session scheduled by {mentor.name} on {date_time}.\n\nSession details:\n{summary}\n\nLocation/Link: {location_info}\n\nRegards,\nThe Team VidyaSangam"
+                participant_data = {
+                    'subject': 'Session Invitation',
+                    'body': participant_body,
+                    'to_email': participant_email
+                }
+                Util.send_email(participant_data)
+            
             return Response({
                 "message": "Session created successfully",
                 "session": SessionSerializer(session).data
@@ -1813,6 +1872,21 @@ def generate_quiz(request):
             )
             pending_quiz.save()
             
+            # Send email notification to the mentee
+            from account.utils import Util
+            
+            # Get the mentee's email
+            email = get_email_by_registration_no(mentee.registration_no)
+            
+            # Send quiz assignment email
+            body = f"Dear {mentee.name},\n\nA new quiz on '{prompt}' has been assigned to you by your mentor {mentor.name}. Please login to the platform to attempt the quiz.\n\nRegards,\nThe Team VidyaSangam"
+            data = {
+                'subject': 'New Quiz Assigned',
+                'body': body,
+                'to_email': email
+            }
+            Util.send_email(data)
+            
             # Include the quiz_id in the response
             return Response({
                 'quiz': quiz,
@@ -2097,6 +2171,38 @@ def update_participant_approval(request):
             participant.deactivation_reason = reason
         
         participant.save()
+        
+        # Send email notification based on the approval status
+        if new_status == 'approved':
+            # Import the email utility
+            from account.utils import Util
+            
+            # Get the student's email
+            email = get_email_by_registration_no(participant.registration_no)
+            
+            # Send approval email
+            body = f"Dear {participant.name},\n\nCongratulations! Your profile has been approved. You can now access all the features of our platform.\n\nRegards,\nThe Team VidyaSangam"
+            data = {
+                'subject': 'Profile Approved',
+                'body': body,
+                'to_email': email
+            }
+            Util.send_email(data)
+        elif new_status == 'rejected':
+            # Import the email utility
+            from account.utils import Util
+            
+            # Get the student's email
+            email = get_email_by_registration_no(participant.registration_no)
+            
+            # Send rejection email with reason
+            body = f"Dear {participant.name},\n\nWe regret to inform you that your profile has been rejected for the following reason:\n\n{participant.deactivation_reason}\n\nPlease contact the administrator for more information.\n\nRegards,\nThe Team VidyaSangam"
+            data = {
+                'subject': 'Profile Rejection',
+                'body': body,
+                'to_email': email
+            }
+            Util.send_email(data)
         
         return Response({
             'message': f'Participant approval status updated to {new_status}',
