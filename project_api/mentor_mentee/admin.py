@@ -1,64 +1,56 @@
 from django.contrib import admin
-from .models import Participant, MentorMenteeRelationship
+from .models import Participant, MentorMenteeRelationship, Session, Badge, QuizResult, ParticipantBadge, MentorFeedback, ApplicationFeedback, FeedbackSettings
 
 class ParticipantAdmin(admin.ModelAdmin):
-    # Fields to display in the list view in the admin interface
-    list_display = ('name', 'registration_no', 'branch', 'semester', 'mentoring_preferences', 'cgpa', 'sgpa')
-    
-    # Fields that can be searched in the search box
-    search_fields = ('name', 'registration_no', 'branch', 'mentoring_preferences')
-
-    # Filter options in the admin panel
-    list_filter = ('branch', 'mentoring_preferences', 'semester')
-
-    # Fields to display in the detail/edit view
-    readonly_fields = ('display_proof_of_research_publications', 'display_proof_of_hackathon_participation', 
-                       'display_proof_of_coding_competitions', 'display_proof_of_academic_performance',
-                       'display_proof_of_internships', 'display_proof_of_extracurricular_activities')
-
-    # Method to handle file fields and display file presence
-    def display_proof_of_research_publications(self, obj):
-        if obj.proof_of_research_publications:
-            return "Research Proof Uploaded"
-        return "No File"
-    
-    def display_proof_of_hackathon_participation(self, obj):
-        if obj.proof_of_hackathon_participation:
-            return "Hackathon Proof Uploaded"
-        return "No File"
-    
-    def display_proof_of_coding_competitions(self, obj):
-        if obj.proof_of_coding_competitions:
-            return "Coding Competition Proof Uploaded"
-        return "No File"
-
-    def display_proof_of_academic_performance(self, obj):
-        if obj.proof_of_academic_performance:
-            return "Academic Proof Uploaded"
-        return "No File"
-
-    def display_proof_of_internships(self, obj):
-        if obj.proof_of_internships:
-            return "Internship Proof Uploaded"
-        return "No File"
-
-    def display_proof_of_extracurricular_activities(self, obj):
-        if obj.proof_of_extracurricular_activities:
-            return "Extracurricular Proof Uploaded"
-        return "No File"
-
-    # Custom labels for the file display fields
-    display_proof_of_research_publications.short_description = 'Proof of Research Publications'
-    display_proof_of_hackathon_participation.short_description = 'Proof of Hackathon Participation'
-    display_proof_of_coding_competitions.short_description = 'Proof of Coding Competitions'
-    display_proof_of_academic_performance.short_description = 'Proof of Academic Performance'
-    display_proof_of_internships.short_description = 'Proof of Internships'
-    display_proof_of_extracurricular_activities.short_description = 'Proof of Extracurricular Activities'
+    list_display = ('name', 'registration_no', 'branch', 'semester', 'department', 'approval_status', 'status')
+    list_filter = ('branch', 'semester', 'approval_status', 'status', 'department', 'is_super_mentor')
+    search_fields = ('name', 'registration_no', 'tech_stack')
 
 class MentorMenteeRelationshipAdmin(admin.ModelAdmin):
-    list_display = ('mentor', 'mentee', 'created_at')
-    search_fields = ('mentor__name', 'mentee__name', 'mentor__registration_no', 'mentee__registration_no')
-    list_filter = ('created_at',)
+    list_display = ('mentor', 'mentee', 'created_at', 'manually_created')
+    list_filter = ('created_at', 'manually_created')
+    search_fields = ('mentor__name', 'mentor__registration_no', 'mentee__name', 'mentee__registration_no')
+
+class SessionAdmin(admin.ModelAdmin):
+    list_display = ('session_id', 'mentor', 'session_type', 'date_time', 'created_at')
+    search_fields = ('mentor__name', 'summary')
+    list_filter = ('session_type', 'date_time')
+
+class BadgeAdmin(admin.ModelAdmin):
+    list_display = ('name', 'description', 'points_required')
+    search_fields = ('name', 'description')
+    list_filter = ('points_required',)
+
+class QuizResultAdmin(admin.ModelAdmin):
+    list_display = ('id', 'participant', 'quiz_topic', 'score', 'percentage', 'status', 'completed_date')
+    search_fields = ('participant__name', 'quiz_topic')
+    list_filter = ('status', 'completed_date')
+
+class ParticipantBadgeAdmin(admin.ModelAdmin):
+    list_display = ('participant', 'badge', 'earned_date', 'is_claimed', 'claimed_date')
+    search_fields = ('participant__name', 'badge__name')
+    list_filter = ('is_claimed', 'earned_date', 'claimed_date')
+
+class MentorFeedbackAdmin(admin.ModelAdmin):
+    list_display = ('mentor', 'mentee', 'overall_rating', 'anonymous', 'created_at')
+    search_fields = ('mentor__name', 'mentee__name', 'strengths', 'areas_for_improvement')
+    list_filter = ('anonymous', 'created_at', 'overall_rating')
+
+class ApplicationFeedbackAdmin(admin.ModelAdmin):
+    list_display = ('participant', 'overall_rating', 'nps_score', 'anonymous', 'created_at')
+    search_fields = ('participant__name', 'what_you_like', 'what_to_improve', 'feature_requests')
+    list_filter = ('anonymous', 'created_at', 'overall_rating', 'nps_score')
+
+class FeedbackSettingsAdmin(admin.ModelAdmin):
+    list_display = ('department', 'mentor_feedback_enabled', 'app_feedback_enabled', 'allow_anonymous_feedback', 'updated_at')
+    list_filter = ('mentor_feedback_enabled', 'app_feedback_enabled', 'allow_anonymous_feedback')
 
 admin.site.register(Participant, ParticipantAdmin)
 admin.site.register(MentorMenteeRelationship, MentorMenteeRelationshipAdmin)
+admin.site.register(Session, SessionAdmin)
+admin.site.register(Badge, BadgeAdmin)
+admin.site.register(QuizResult, QuizResultAdmin)
+admin.site.register(ParticipantBadge, ParticipantBadgeAdmin)
+admin.site.register(MentorFeedback, MentorFeedbackAdmin)
+admin.site.register(ApplicationFeedback, ApplicationFeedbackAdmin)
+admin.site.register(FeedbackSettings, FeedbackSettingsAdmin)

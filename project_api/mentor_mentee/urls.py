@@ -59,4 +59,15 @@ urlpatterns = [
     path('quiz/details/<int:result_id>/', views.get_quiz_result_details, name='get_quiz_result_details'),
     path('quiz/pending/<str:registration_no>/', views.get_pending_quizzes, name='get_pending_quizzes'),
     path('quiz/delete/<int:quiz_id>/', views.delete_quiz, name='delete_quiz'),
+    
+    # Feedback management 
+    path('feedback/settings/update/', views.update_feedback_settings, name='update_feedback_settings'),
+    path('feedback/settings/', views.get_feedback_settings, name='get_feedback_settings'),
+    path('feedback/eligibility/<str:registration_no>/', views.check_feedback_eligibility, name='check_feedback_eligibility'),
+    path('feedback/mentor/submit/', views.submit_mentor_feedback, name='submit_mentor_feedback'),
+    path('feedback/app/submit/', views.submit_app_feedback, name='submit_app_feedback'),
+    path('feedback/mentor/<str:mentor_id>/', views.get_mentor_feedback, name='get_mentor_feedback'),
+    path('feedback/app/summary/', views.get_app_feedback_summary, name='get_app_feedback_summary'),
+    path('feedback/delete/', views.delete_feedback, name='delete_feedback'),
+    path('feedback/send-reminders/', views.send_feedback_reminders, name='send_feedback_reminders'),
 ]

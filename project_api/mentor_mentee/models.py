@@ -215,3 +215,101 @@ class ParticipantBadge(models.Model):
     
     def __str__(self):
         return f"{self.participant.name} - {self.badge.name}"
+
+
+class MentorFeedback(models.Model):
+    """Model to store feedback from mentees about their mentors"""
+    id = models.AutoField(primary_key=True)
+    relationship = models.ForeignKey(MentorMenteeRelationship, on_delete=models.CASCADE, related_name='feedback')
+    # Mentor and mentee fields for easier querying
+    mentor = models.ForeignKey(Participant, on_delete=models.CASCADE, related_name='received_feedback')
+    mentee = models.ForeignKey(Participant, on_delete=models.CASCADE, related_name='given_feedback')
+    
+    # Rating fields (1-5 scale)
+    communication_rating = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
+    knowledge_rating = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
+    availability_rating = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
+    helpfulness_rating = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
+    overall_rating = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
+    
+    # Comments
+    strengths = models.TextField(blank=True, null=True)
+    areas_for_improvement = models.TextField(blank=True, null=True)
+    additional_comments = models.TextField(blank=True, null=True)
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    # Anonymity flag - if True, the mentee's identity will be hidden from the mentor
+    anonymous = models.BooleanField(default=False)
+    
+    class Meta:
+        # Ensure each mentee can only give feedback once per relationship
+        unique_together = ('relationship',)
+        
+    def __str__(self):
+        if self.anonymous:
+            return f"Anonymous feedback for {self.mentor.name}"
+        return f"Feedback from {self.mentee.name} for {self.mentor.name}"
+
+
+class ApplicationFeedback(models.Model):
+    """Model to store general feedback about the application"""
+    id = models.AutoField(primary_key=True)
+    participant = models.ForeignKey(Participant, on_delete=models.CASCADE, related_name='app_feedback')
+    
+    # Rating fields (1-5 scale)
+    usability_rating = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
+    features_rating = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
+    performance_rating = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
+    overall_rating = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
+    
+    # NPS (Net Promoter Score)
+    nps_score = models.IntegerField(validators=[MinValueValidator(0), MaxValueValidator(10)])
+    
+    # Comments
+    what_you_like = models.TextField(blank=True, null=True)
+    what_to_improve = models.TextField(blank=True, null=True)
+    feature_requests = models.TextField(blank=True, null=True)
+    additional_comments = models.TextField(blank=True, null=True)
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    # Anonymous flag
+    anonymous = models.BooleanField(default=False)
+    
+    def __str__(self):
+        if self.anonymous:
+            return f"Anonymous application feedback (ID: {self.id})"
+        return f"Application feedback from {self.participant.name}"
+
+
+class FeedbackSettings(models.Model):
+    """Model to control feedback settings globally or per department"""
+    id = models.AutoField(primary_key=True)
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, null=True, blank=True)
+    
+    # If department is null, these are global settings
+    mentor_feedback_enabled = models.BooleanField(default=False)
+    app_feedback_enabled = models.BooleanField(default=False)
+    
+    # Setting for feedback window
+    feedback_start_date = models.DateTimeField(null=True, blank=True)
+    feedback_end_date = models.DateTimeField(null=True, blank=True)
+    
+    # Setting for anonymity
+    allow_anonymous_feedback = models.BooleanField(default=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ('department',)  # Only one setting per department, null is for global
+        
+    def __str__(self):
+        if self.department:
+            return f"Feedback settings for {self.department.name}"
+        return "Global feedback settings"

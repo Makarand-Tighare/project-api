@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.core.exceptions import ValidationError
-from .models import Participant, MentorMenteeRelationship, Session, QuizResult, Badge, ParticipantBadge
+from .models import Participant, MentorMenteeRelationship, Session, QuizResult, Badge, ParticipantBadge, MentorFeedback, ApplicationFeedback, FeedbackSettings
 from account.models import Department
 from account.serializers import DepartmentSerializer
 
@@ -306,8 +306,45 @@ class BadgeSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class ParticipantBadgeSerializer(serializers.ModelSerializer):
-    badge_details = BadgeSerializer(source='badge', read_only=True)
+    badge_details = serializers.SerializerMethodField()
     
     class Meta:
         model = ParticipantBadge
-        fields = ['id', 'participant', 'badge', 'badge_details', 'earned_date', 'is_claimed', 'claimed_date']
+        fields = '__all__'
+        
+    def get_badge_details(self, obj):
+        return BadgeSerializer(obj.badge).data
+
+class MentorFeedbackSerializer(serializers.ModelSerializer):
+    mentee_name = serializers.SerializerMethodField()
+    mentor_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = MentorFeedback
+        fields = '__all__'
+        
+    def get_mentee_name(self, obj):
+        return obj.mentee.name if (obj.mentee and not obj.anonymous) else "Anonymous Mentee"
+        
+    def get_mentor_name(self, obj):
+        return obj.mentor.name if obj.mentor else None
+
+class ApplicationFeedbackSerializer(serializers.ModelSerializer):
+    participant_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ApplicationFeedback
+        fields = '__all__'
+        
+    def get_participant_name(self, obj):
+        return obj.participant.name if (obj.participant and not obj.anonymous) else "Anonymous User"
+
+class FeedbackSettingsSerializer(serializers.ModelSerializer):
+    department_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = FeedbackSettings
+        fields = '__all__'
+        
+    def get_department_name(self, obj):
+        return obj.department.name if obj.department else "Global Settings"

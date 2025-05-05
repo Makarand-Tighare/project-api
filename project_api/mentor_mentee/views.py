@@ -3,8 +3,8 @@ import json
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
-from .models import Participant, MentorMenteeRelationship, Session, QuizResult, Badge, ParticipantBadge
-from .serializers import ParticipantSerializer, SessionSerializer, MentorInfoSerializer, MenteeInfoSerializer, QuizResultSerializer, BadgeSerializer, ParticipantBadgeSerializer
+from .models import Participant, MentorMenteeRelationship, Session, QuizResult, Badge, ParticipantBadge, Department, FeedbackSettings, MentorFeedback, ApplicationFeedback
+from .serializers import ParticipantSerializer, SessionSerializer, MentorInfoSerializer, MenteeInfoSerializer, QuizResultSerializer, BadgeSerializer, ParticipantBadgeSerializer, FeedbackSettingsSerializer, MentorFeedbackSerializer, ApplicationFeedbackSerializer
 from collections import defaultdict
 from itertools import cycle
 from django.db import transaction
@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 import datetime
 from django.db import models
 from account.models import Student  # Import Student model for email lookup
+from django.utils import timezone
 
 load_dotenv()
 
@@ -3084,5 +3085,885 @@ def delete_badge_type(request, badge_id):
     except Exception as e:
         return Response({
             'error': 'Failed to delete badge type',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ----- Feedback Management Endpoints -----
+
+@api_view(['POST'])
+def update_feedback_settings(request):
+    """Update feedback settings (global or department-specific)"""
+    department_id = request.data.get('department_id', None)
+    
+    try:
+        # Find the department if provided
+        department = None
+        if department_id:
+            try:
+                department = Department.objects.get(id=department_id)
+            except Department.DoesNotExist:
+                return Response({
+                    'error': f'Department with ID {department_id} not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Try to get existing settings
+        try:
+            settings = FeedbackSettings.objects.get(department=department)
+            old_mentor_feedback_enabled = settings.mentor_feedback_enabled
+            old_app_feedback_enabled = settings.app_feedback_enabled
+        except FeedbackSettings.DoesNotExist:
+            # Create new settings if they don't exist
+            settings = FeedbackSettings(department=department)
+            old_mentor_feedback_enabled = False
+            old_app_feedback_enabled = False
+        
+        # Track if feedback has been newly enabled
+        mentor_feedback_newly_enabled = False
+        app_feedback_newly_enabled = False
+        
+        # Update settings fields
+        if 'mentor_feedback_enabled' in request.data:
+            new_mentor_feedback_enabled = request.data.get('mentor_feedback_enabled')
+            if not old_mentor_feedback_enabled and new_mentor_feedback_enabled:
+                mentor_feedback_newly_enabled = True
+            settings.mentor_feedback_enabled = new_mentor_feedback_enabled
+        
+        if 'app_feedback_enabled' in request.data:
+            new_app_feedback_enabled = request.data.get('app_feedback_enabled')
+            if not old_app_feedback_enabled and new_app_feedback_enabled:
+                app_feedback_newly_enabled = True
+            settings.app_feedback_enabled = new_app_feedback_enabled
+        
+        if 'allow_anonymous_feedback' in request.data:
+            settings.allow_anonymous_feedback = request.data.get('allow_anonymous_feedback')
+            
+        # Handle dates (convert to datetime if provided)
+        if 'feedback_start_date' in request.data and request.data.get('feedback_start_date'):
+            settings.feedback_start_date = request.data.get('feedback_start_date')
+            
+        if 'feedback_end_date' in request.data and request.data.get('feedback_end_date'):
+            settings.feedback_end_date = request.data.get('feedback_end_date')
+            
+        settings.save()
+        
+        # Send emails if feedback has been newly enabled and we're within the feedback window
+        if mentor_feedback_newly_enabled or app_feedback_newly_enabled:
+            # Check if we're within the feedback window
+            now = timezone.now()
+            within_window = True
+            
+            if settings.feedback_start_date and settings.feedback_end_date:
+                within_window = (settings.feedback_start_date <= now <= settings.feedback_end_date)
+            elif settings.feedback_start_date:
+                within_window = (settings.feedback_start_date <= now)
+            elif settings.feedback_end_date:
+                within_window = (now <= settings.feedback_end_date)
+                
+            if within_window:
+                # Import email utility
+                from account.utils import Util
+                
+                # Get relevant participants
+                if department:
+                    # Department-specific
+                    participants = Participant.objects.filter(
+                        department=department,
+                        approval_status='approved',
+                        status='active'
+                    )
+                else:
+                    # Global
+                    participants = Participant.objects.filter(
+                        approval_status='approved',
+                        status='active'
+                    )
+                
+                # Identify which participants should get mentor feedback notifications
+                if mentor_feedback_newly_enabled:
+                    # Find mentees
+                    mentee_ids = MentorMenteeRelationship.objects.values_list('mentee__registration_no', flat=True)
+                    mentees = participants.filter(registration_no__in=mentee_ids)
+                    
+                    # Don't notify mentees who have already submitted feedback
+                    for mentee in mentees:
+                        try:
+                            # Check if this mentee has already given feedback
+                            relationship = MentorMenteeRelationship.objects.get(mentee=mentee)
+                            already_submitted = MentorFeedback.objects.filter(relationship=relationship).exists()
+                            
+                            if not already_submitted:
+                                # Get the mentee's email
+                                email = get_email_by_registration_no(mentee.registration_no)
+                                mentor = relationship.mentor
+                                
+                                # Send mentor feedback email notification
+                                mentor_feedback_body = f"Dear {mentee.name},\n\nThe mentor feedback window is now open! Please take a moment to provide feedback for your mentor, {mentor.name}.\n\nFeedback helps mentors improve and is valuable for the program's success.\n\nThank you,\nThe Team VidyaSangam"
+                                mentor_feedback_data = {
+                                    'subject': 'Mentor Feedback Window Now Open',
+                                    'body': mentor_feedback_body,
+                                    'to_email': email
+                                }
+                                Util.send_email(mentor_feedback_data)
+                        except Exception as e:
+                            print(f"Error sending mentor feedback email to {mentee.registration_no}: {str(e)}")
+                
+                # Send application feedback notifications to all participants
+                if app_feedback_newly_enabled:
+                    # Don't notify users who have already submitted app feedback
+                    for participant in participants:
+                        try:
+                            already_submitted = ApplicationFeedback.objects.filter(participant=participant).exists()
+                            
+                            if not already_submitted:
+                                # Get participant's email
+                                email = get_email_by_registration_no(participant.registration_no)
+                                
+                                # Send app feedback email notification
+                                app_feedback_body = f"Dear {participant.name},\n\nWe value your opinion! The application feedback window is now open. Please take a moment to share your thoughts on the VidyaSangam platform.\n\nYour feedback helps us improve the experience for everyone.\n\nThank you,\nThe Team VidyaSangam"
+                                app_feedback_data = {
+                                    'subject': 'Application Feedback Window Now Open',
+                                    'body': app_feedback_body,
+                                    'to_email': email
+                                }
+                                Util.send_email(app_feedback_data)
+                        except Exception as e:
+                            print(f"Error sending app feedback email to {participant.registration_no}: {str(e)}")
+        
+        serializer = FeedbackSettingsSerializer(settings)
+        return Response({
+            'message': 'Feedback settings updated successfully',
+            'settings': serializer.data,
+            'email_notifications': 'Sent' if (mentor_feedback_newly_enabled or app_feedback_newly_enabled) else 'Not sent'
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response({
+            'error': 'Failed to update feedback settings',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+def get_feedback_settings(request):
+    """Get feedback settings (global or department-specific)"""
+    department_id = request.query_params.get('department_id', None)
+    
+    try:
+        # Find the department if provided
+        department = None
+        if department_id:
+            try:
+                department = Department.objects.get(id=department_id)
+            except Department.DoesNotExist:
+                return Response({
+                    'error': f'Department with ID {department_id} not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Try to get department-specific settings first
+        if department:
+            settings = FeedbackSettings.objects.filter(department=department).first()
+            if settings:
+                serializer = FeedbackSettingsSerializer(settings)
+                return Response(serializer.data)
+        
+        # Fall back to global settings
+        global_settings = FeedbackSettings.objects.filter(department=None).first()
+        
+        # If no settings exist at all, return default values
+        if not global_settings:
+            return Response({
+                'mentor_feedback_enabled': False,
+                'app_feedback_enabled': False,
+                'allow_anonymous_feedback': True,
+                'feedback_start_date': None,
+                'feedback_end_date': None,
+                'is_global': True,
+                'department': None,
+                'department_name': None
+            })
+            
+        serializer = FeedbackSettingsSerializer(global_settings)
+        return Response(serializer.data)
+        
+    except Exception as e:
+        return Response({
+            'error': 'Failed to retrieve feedback settings',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+def check_feedback_eligibility(request, registration_no):
+    """Check if a participant is eligible to submit feedback"""
+    try:
+        participant = Participant.objects.get(registration_no=registration_no)
+        
+        # Get participant's department
+        department = participant.department
+        
+        # Check if feedback is enabled (department-specific or global)
+        department_settings = None
+        if department:
+            department_settings = FeedbackSettings.objects.filter(department=department).first()
+            
+        global_settings = FeedbackSettings.objects.filter(department=None).first()
+        
+        # Use department settings if available, otherwise global settings
+        settings = department_settings or global_settings
+        
+        if not settings:
+            return Response({
+                'mentor_feedback_eligible': False,
+                'app_feedback_eligible': False,
+                'message': 'Feedback is not currently enabled'
+            })
+        
+        # Check if within feedback window (if dates are set)
+        # Use timezone-aware datetime for comparison
+        now = timezone.now()
+        within_window = True
+        
+        if settings.feedback_start_date and settings.feedback_end_date:
+            within_window = (settings.feedback_start_date <= now <= settings.feedback_end_date)
+        elif settings.feedback_start_date:
+            within_window = (settings.feedback_start_date <= now)
+        elif settings.feedback_end_date:
+            within_window = (now <= settings.feedback_end_date)
+            
+        if not within_window:
+            return Response({
+                'mentor_feedback_eligible': False,
+                'app_feedback_eligible': False,
+                'message': 'Outside of feedback submission window',
+                'window': {
+                    'start_date': settings.feedback_start_date,
+                    'end_date': settings.feedback_end_date
+                }
+            })
+            
+        # For mentor feedback, check if participant is a mentee
+        is_mentee = MentorMenteeRelationship.objects.filter(mentee=participant).exists()
+        
+        # Check if mentee has already submitted feedback for their mentor
+        already_submitted_mentor_feedback = False
+        if is_mentee:
+            relationship = MentorMenteeRelationship.objects.get(mentee=participant)
+            already_submitted_mentor_feedback = MentorFeedback.objects.filter(
+                relationship=relationship
+            ).exists()
+            
+        # Check if participant has already submitted app feedback
+        already_submitted_app_feedback = ApplicationFeedback.objects.filter(
+            participant=participant
+        ).exists()
+        
+        return Response({
+            'mentor_feedback_eligible': settings.mentor_feedback_enabled and is_mentee and not already_submitted_mentor_feedback,
+            'app_feedback_eligible': settings.app_feedback_enabled and not already_submitted_app_feedback,
+            'allow_anonymous_feedback': settings.allow_anonymous_feedback,
+            'is_mentee': is_mentee,
+            'already_submitted_mentor_feedback': already_submitted_mentor_feedback,
+            'already_submitted_app_feedback': already_submitted_app_feedback,
+            'window': {
+                'start_date': settings.feedback_start_date,
+                'end_date': settings.feedback_end_date
+            }
+        })
+        
+    except Participant.DoesNotExist:
+        return Response({
+            'error': f'Participant with registration number {registration_no} not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'error': 'Failed to check feedback eligibility',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+def submit_mentor_feedback(request):
+    """Submit feedback for a mentor"""
+    mentee_id = request.data.get('mentee_id')
+    
+    if not mentee_id:
+        return Response({
+            'error': 'Mentee ID is required'
+        }, status=status.HTTP_400_BAD_REQUEST)
+        
+    try:
+        # Get the mentee
+        mentee = Participant.objects.get(registration_no=mentee_id)
+        
+        # Check if mentee has a mentor
+        try:
+            relationship = MentorMenteeRelationship.objects.get(mentee=mentee)
+        except MentorMenteeRelationship.DoesNotExist:
+            return Response({
+                'error': 'Mentee does not have an assigned mentor'
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        mentor = relationship.mentor
+        
+        # Check if feedback already exists
+        if MentorFeedback.objects.filter(relationship=relationship).exists():
+            return Response({
+                'error': 'Feedback has already been submitted for this mentor-mentee relationship',
+                'message': 'You can only submit feedback once'
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Check eligibility based on settings
+        department = mentee.department
+        
+        # Check if feedback is enabled (department-specific or global)
+        department_settings = None
+        if department:
+            department_settings = FeedbackSettings.objects.filter(department=department).first()
+            
+        global_settings = FeedbackSettings.objects.filter(department=None).first()
+        
+        # Use department settings if available, otherwise global settings
+        settings = department_settings or global_settings
+        
+        if not settings or not settings.mentor_feedback_enabled:
+            return Response({
+                'error': 'Mentor feedback is not currently enabled'
+            }, status=status.HTTP_403_FORBIDDEN)
+            
+        # Check if within feedback window (if dates are set)
+        now = timezone.now()
+        within_window = True
+        
+        if settings.feedback_start_date and settings.feedback_end_date:
+            within_window = (settings.feedback_start_date <= now <= settings.feedback_end_date)
+        elif settings.feedback_start_date:
+            within_window = (settings.feedback_start_date <= now)
+        elif settings.feedback_end_date:
+            within_window = (now <= settings.feedback_end_date)
+            
+        if not within_window:
+            return Response({
+                'error': 'Outside of feedback submission window',
+                'window': {
+                    'start_date': settings.feedback_start_date,
+                    'end_date': settings.feedback_end_date
+                }
+            }, status=status.HTTP_403_FORBIDDEN)
+            
+        # Validate required fields
+        required_fields = [
+            'communication_rating', 
+            'knowledge_rating', 
+            'availability_rating', 
+            'helpfulness_rating', 
+            'overall_rating'
+        ]
+        
+        for field in required_fields:
+            if field not in request.data or not request.data.get(field):
+                return Response({
+                    'error': f'Field {field} is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        # Get optional fields
+        strengths = request.data.get('strengths', '')
+        areas_for_improvement = request.data.get('areas_for_improvement', '')
+        additional_comments = request.data.get('additional_comments', '')
+        anonymous = request.data.get('anonymous', False)
+        
+        # Ensure anonymous feedback is allowed if requested
+        if anonymous and not settings.allow_anonymous_feedback:
+            return Response({
+                'error': 'Anonymous feedback is not allowed',
+                'message': 'Please submit feedback with your identity'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Create the feedback
+        feedback = MentorFeedback.objects.create(
+            relationship=relationship,
+            mentor=mentor,
+            mentee=mentee,
+            communication_rating=request.data.get('communication_rating'),
+            knowledge_rating=request.data.get('knowledge_rating'),
+            availability_rating=request.data.get('availability_rating'),
+            helpfulness_rating=request.data.get('helpfulness_rating'),
+            overall_rating=request.data.get('overall_rating'),
+            strengths=strengths,
+            areas_for_improvement=areas_for_improvement,
+            additional_comments=additional_comments,
+            anonymous=anonymous
+        )
+        
+        # Return the created feedback
+        serializer = MentorFeedbackSerializer(feedback)
+        return Response({
+            'message': 'Mentor feedback submitted successfully',
+            'feedback': serializer.data
+        }, status=status.HTTP_201_CREATED)
+        
+    except Participant.DoesNotExist:
+        return Response({
+            'error': f'Participant with registration number {mentee_id} not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'error': 'Failed to submit mentor feedback',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+def submit_app_feedback(request):
+    """Submit feedback about the application"""
+    participant_id = request.data.get('participant_id')
+    
+    if not participant_id:
+        return Response({
+            'error': 'Participant ID is required'
+        }, status=status.HTTP_400_BAD_REQUEST)
+        
+    try:
+        # Get the participant
+        participant = Participant.objects.get(registration_no=participant_id)
+        
+        # Check if feedback already exists
+        if ApplicationFeedback.objects.filter(participant=participant).exists():
+            return Response({
+                'error': 'App feedback has already been submitted by this participant',
+                'message': 'You can only submit feedback once'
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Check eligibility based on settings
+        department = participant.department
+        
+        # Check if feedback is enabled (department-specific or global)
+        department_settings = None
+        if department:
+            department_settings = FeedbackSettings.objects.filter(department=department).first()
+            
+        global_settings = FeedbackSettings.objects.filter(department=None).first()
+        
+        # Use department settings if available, otherwise global settings
+        settings = department_settings or global_settings
+        
+        if not settings or not settings.app_feedback_enabled:
+            return Response({
+                'error': 'Application feedback is not currently enabled'
+            }, status=status.HTTP_403_FORBIDDEN)
+            
+        # Check if within feedback window (if dates are set)
+        now = timezone.now()
+        within_window = True
+        
+        if settings.feedback_start_date and settings.feedback_end_date:
+            within_window = (settings.feedback_start_date <= now <= settings.feedback_end_date)
+        elif settings.feedback_start_date:
+            within_window = (settings.feedback_start_date <= now)
+        elif settings.feedback_end_date:
+            within_window = (now <= settings.feedback_end_date)
+            
+        if not within_window:
+            return Response({
+                'error': 'Outside of feedback submission window',
+                'window': {
+                    'start_date': settings.feedback_start_date,
+                    'end_date': settings.feedback_end_date
+                }
+            }, status=status.HTTP_403_FORBIDDEN)
+            
+        # Validate required fields
+        required_fields = [
+            'usability_rating', 
+            'features_rating', 
+            'performance_rating', 
+            'overall_rating',
+            'nps_score'
+        ]
+        
+        for field in required_fields:
+            if field not in request.data or request.data.get(field) is None:
+                return Response({
+                    'error': f'Field {field} is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        # Get optional fields
+        what_you_like = request.data.get('what_you_like', '')
+        what_to_improve = request.data.get('what_to_improve', '')
+        feature_requests = request.data.get('feature_requests', '')
+        additional_comments = request.data.get('additional_comments', '')
+        anonymous = request.data.get('anonymous', False)
+        
+        # Ensure anonymous feedback is allowed if requested
+        if anonymous and not settings.allow_anonymous_feedback:
+            return Response({
+                'error': 'Anonymous feedback is not allowed',
+                'message': 'Please submit feedback with your identity'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Create the feedback
+        feedback = ApplicationFeedback.objects.create(
+            participant=participant,
+            usability_rating=request.data.get('usability_rating'),
+            features_rating=request.data.get('features_rating'),
+            performance_rating=request.data.get('performance_rating'),
+            overall_rating=request.data.get('overall_rating'),
+            nps_score=request.data.get('nps_score'),
+            what_you_like=what_you_like,
+            what_to_improve=what_to_improve,
+            feature_requests=feature_requests,
+            additional_comments=additional_comments,
+            anonymous=anonymous
+        )
+        
+        # Return the created feedback
+        serializer = ApplicationFeedbackSerializer(feedback)
+        return Response({
+            'message': 'Application feedback submitted successfully',
+            'feedback': serializer.data
+        }, status=status.HTTP_201_CREATED)
+        
+    except Participant.DoesNotExist:
+        return Response({
+            'error': f'Participant with registration number {participant_id} not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'error': 'Failed to submit application feedback',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+def get_mentor_feedback(request, mentor_id):
+    """Get all feedback for a specific mentor"""
+    try:
+        mentor = Participant.objects.get(registration_no=mentor_id)
+        
+        # Get all feedback for this mentor
+        feedback = MentorFeedback.objects.filter(mentor=mentor)
+        
+        # Calculate average ratings
+        avg_ratings = {
+            'communication': feedback.aggregate(models.Avg('communication_rating'))['communication_rating__avg'] or 0,
+            'knowledge': feedback.aggregate(models.Avg('knowledge_rating'))['knowledge_rating__avg'] or 0,
+            'availability': feedback.aggregate(models.Avg('availability_rating'))['availability_rating__avg'] or 0,
+            'helpfulness': feedback.aggregate(models.Avg('helpfulness_rating'))['helpfulness_rating__avg'] or 0,
+            'overall': feedback.aggregate(models.Avg('overall_rating'))['overall_rating__avg'] or 0
+        }
+        
+        # Round the averages to 2 decimal places
+        for key in avg_ratings:
+            avg_ratings[key] = round(avg_ratings[key], 2)
+            
+        # Serialize the feedback
+        serializer = MentorFeedbackSerializer(feedback, many=True)
+        
+        return Response({
+            'mentor': {
+                'name': mentor.name,
+                'registration_no': mentor.registration_no
+            },
+            'feedback_count': feedback.count(),
+            'average_ratings': avg_ratings,
+            'feedback': serializer.data
+        })
+        
+    except Participant.DoesNotExist:
+        return Response({
+            'error': f'Mentor with registration number {mentor_id} not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            'error': 'Failed to retrieve mentor feedback',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+def get_app_feedback_summary(request):
+    """Get a summary of all application feedback (admin only)"""
+    try:
+        # Get all application feedback
+        feedback = ApplicationFeedback.objects.all()
+        
+        # Calculate average ratings
+        avg_ratings = {
+            'usability': feedback.aggregate(models.Avg('usability_rating'))['usability_rating__avg'] or 0,
+            'features': feedback.aggregate(models.Avg('features_rating'))['features_rating__avg'] or 0,
+            'performance': feedback.aggregate(models.Avg('performance_rating'))['performance_rating__avg'] or 0,
+            'overall': feedback.aggregate(models.Avg('overall_rating'))['overall_rating__avg'] or 0,
+            'nps': feedback.aggregate(models.Avg('nps_score'))['nps_score__avg'] or 0
+        }
+        
+        # Round the averages to 2 decimal places
+        for key in avg_ratings:
+            avg_ratings[key] = round(avg_ratings[key], 2)
+            
+        # Calculate NPS categories
+        nps_promoters = feedback.filter(nps_score__gte=9).count()
+        nps_passives = feedback.filter(nps_score__gte=7, nps_score__lte=8).count()
+        nps_detractors = feedback.filter(nps_score__lte=6).count()
+        
+        # Calculate NPS score
+        total_responses = feedback.count()
+        nps_score = 0
+        
+        if total_responses > 0:
+            nps_score = round(((nps_promoters / total_responses) - (nps_detractors / total_responses)) * 100)
+            
+        # Serialize the feedback
+        serializer = ApplicationFeedbackSerializer(feedback, many=True)
+        
+        return Response({
+            'feedback_count': total_responses,
+            'average_ratings': avg_ratings,
+            'nps': {
+                'score': nps_score,
+                'promoters': nps_promoters,
+                'passives': nps_passives,
+                'detractors': nps_detractors
+            },
+            'feedback': serializer.data
+        })
+        
+    except Exception as e:
+        return Response({
+            'error': 'Failed to retrieve application feedback summary',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['DELETE'])
+def delete_feedback(request):
+    """Delete a specific feedback instance (admin only)"""
+    feedback_type = request.data.get('feedback_type')  # 'mentor' or 'app'
+    feedback_id = request.data.get('feedback_id')
+    
+    if not feedback_type or not feedback_id:
+        return Response({
+            'error': 'Feedback type and ID are required'
+        }, status=status.HTTP_400_BAD_REQUEST)
+        
+    if feedback_type not in ['mentor', 'app']:
+        return Response({
+            'error': 'Invalid feedback type. Must be "mentor" or "app"'
+        }, status=status.HTTP_400_BAD_REQUEST)
+        
+    try:
+        if feedback_type == 'mentor':
+            try:
+                feedback = MentorFeedback.objects.get(id=feedback_id)
+            except MentorFeedback.DoesNotExist:
+                return Response({
+                    'error': f'Mentor feedback with ID {feedback_id} not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+                
+            # Store details for response
+            mentor_name = feedback.mentor.name
+            mentee_name = "Anonymous" if feedback.anonymous else feedback.mentee.name
+            
+            # Delete the feedback
+            feedback.delete()
+            
+            return Response({
+                'message': f'Mentor feedback from {mentee_name} for {mentor_name} deleted successfully'
+            }, status=status.HTTP_200_OK)
+        else:  # app feedback
+            try:
+                feedback = ApplicationFeedback.objects.get(id=feedback_id)
+            except ApplicationFeedback.DoesNotExist:
+                return Response({
+                    'error': f'Application feedback with ID {feedback_id} not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+                
+            # Store details for response
+            participant_name = "Anonymous" if feedback.anonymous else feedback.participant.name
+            
+            # Delete the feedback
+            feedback.delete()
+            
+            return Response({
+                'message': f'Application feedback from {participant_name} deleted successfully'
+            }, status=status.HTTP_200_OK)
+            
+    except Exception as e:
+        return Response({
+            'error': 'Failed to delete feedback',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+def send_feedback_reminders(request):
+    """Send email reminders about open feedback to eligible participants"""
+    department_id = request.data.get('department_id', None)
+    feedback_type = request.data.get('feedback_type', 'all')  # 'mentor', 'app', or 'all'
+    
+    if feedback_type not in ['mentor', 'app', 'all']:
+        return Response({
+            'error': 'Invalid feedback type. Must be "mentor", "app", or "all"'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        # Find the department if provided
+        department = None
+        if department_id:
+            try:
+                department = Department.objects.get(id=department_id)
+            except Department.DoesNotExist:
+                return Response({
+                    'error': f'Department with ID {department_id} not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get feedback settings (department-specific or global)
+        department_settings = None
+        if department:
+            department_settings = FeedbackSettings.objects.filter(department=department).first()
+            
+        global_settings = FeedbackSettings.objects.filter(department=None).first()
+        
+        # Use department settings if available, otherwise global settings
+        settings = department_settings or global_settings
+        
+        if not settings:
+            return Response({
+                'error': 'No feedback settings found',
+                'message': 'Please configure feedback settings first'
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Check if feedback is enabled
+        mentor_feedback_enabled = settings.mentor_feedback_enabled
+        app_feedback_enabled = settings.app_feedback_enabled
+        
+        if feedback_type == 'mentor' and not mentor_feedback_enabled:
+            return Response({
+                'error': 'Mentor feedback is not currently enabled',
+                'message': 'Enable mentor feedback before sending reminders'
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        if feedback_type == 'app' and not app_feedback_enabled:
+            return Response({
+                'error': 'Application feedback is not currently enabled',
+                'message': 'Enable application feedback before sending reminders'
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        if feedback_type == 'all' and not (mentor_feedback_enabled or app_feedback_enabled):
+            return Response({
+                'error': 'No feedback is currently enabled',
+                'message': 'Enable at least one type of feedback before sending reminders'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if we're within the feedback window
+        now = timezone.now()
+        within_window = True
+        
+        if settings.feedback_start_date and settings.feedback_end_date:
+            within_window = (settings.feedback_start_date <= now <= settings.feedback_end_date)
+        elif settings.feedback_start_date:
+            within_window = (settings.feedback_start_date <= now)
+        elif settings.feedback_end_date:
+            within_window = (now <= settings.feedback_end_date)
+            
+        if not within_window:
+            return Response({
+                'error': 'Outside of feedback submission window',
+                'window': {
+                    'start_date': settings.feedback_start_date,
+                    'end_date': settings.feedback_end_date
+                },
+                'message': 'Cannot send reminders outside of feedback window'
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Import email utility
+        from account.utils import Util
+        
+        # Get relevant participants
+        if department:
+            # Department-specific
+            participants = Participant.objects.filter(
+                department=department,
+                approval_status='approved',
+                status='active'
+            )
+        else:
+            # Global
+            participants = Participant.objects.filter(
+                approval_status='approved',
+                status='active'
+            )
+            
+        emails_sent = 0
+        errors = 0
+        
+        # Send mentor feedback reminders
+        if feedback_type in ['mentor', 'all'] and mentor_feedback_enabled:
+            # Find mentees
+            mentee_ids = MentorMenteeRelationship.objects.values_list('mentee__registration_no', flat=True)
+            mentees = participants.filter(registration_no__in=mentee_ids)
+            
+            # Don't send to mentees who have already submitted feedback
+            for mentee in mentees:
+                try:
+                    # Check if this mentee has already given feedback
+                    relationship = MentorMenteeRelationship.objects.get(mentee=mentee)
+                    already_submitted = MentorFeedback.objects.filter(relationship=relationship).exists()
+                    
+                    if not already_submitted:
+                        # Get the mentee's email
+                        email = get_email_by_registration_no(mentee.registration_no)
+                        mentor = relationship.mentor
+                        
+                        # Get deadline info for the email
+                        deadline_text = ""
+                        if settings.feedback_end_date:
+                            deadline = settings.feedback_end_date.strftime("%Y-%m-%d")
+                            deadline_text = f"\n\nPlease submit your feedback by {deadline}."
+                        
+                        # Send mentor feedback email notification
+                        mentor_feedback_body = f"Dear {mentee.name},\n\nThis is a reminder that the mentor feedback window is open! Please take a moment to provide feedback for your mentor, {mentor.name}.{deadline_text}\n\nFeedback helps mentors improve and is valuable for the program's success.\n\nThank you,\nThe Team VidyaSangam"
+                        mentor_feedback_data = {
+                            'subject': 'Reminder: Mentor Feedback',
+                            'body': mentor_feedback_body,
+                            'to_email': email
+                        }
+                        Util.send_email(mentor_feedback_data)
+                        emails_sent += 1
+                except Exception as e:
+                    print(f"Error sending mentor feedback reminder to {mentee.registration_no}: {str(e)}")
+                    errors += 1
+        
+        # Send app feedback reminders
+        if feedback_type in ['app', 'all'] and app_feedback_enabled:
+            # Don't send to users who have already submitted app feedback
+            for participant in participants:
+                try:
+                    already_submitted = ApplicationFeedback.objects.filter(participant=participant).exists()
+                    
+                    if not already_submitted:
+                        # Get participant's email
+                        email = get_email_by_registration_no(participant.registration_no)
+                        
+                        # Get deadline info for the email
+                        deadline_text = ""
+                        if settings.feedback_end_date:
+                            deadline = settings.feedback_end_date.strftime("%Y-%m-%d")
+                            deadline_text = f"\n\nPlease submit your feedback by {deadline}."
+                        
+                        # Send app feedback email notification
+                        app_feedback_body = f"Dear {participant.name},\n\nThis is a reminder that we value your opinion! The application feedback window is currently open. Please take a moment to share your thoughts on the VidyaSangam platform.{deadline_text}\n\nYour feedback helps us improve the experience for everyone.\n\nThank you,\nThe Team VidyaSangam"
+                        app_feedback_data = {
+                            'subject': 'Reminder: Application Feedback',
+                            'body': app_feedback_body,
+                            'to_email': email
+                        }
+                        Util.send_email(app_feedback_data)
+                        emails_sent += 1
+                except Exception as e:
+                    print(f"Error sending app feedback reminder to {participant.registration_no}: {str(e)}")
+                    errors += 1
+        
+        return Response({
+            'message': 'Feedback reminders sent successfully',
+            'emails_sent': emails_sent,
+            'errors': errors,
+            'feedback_types': feedback_type
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response({
+            'error': 'Failed to send feedback reminders',
             'details': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
