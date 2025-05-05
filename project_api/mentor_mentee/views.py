@@ -3,8 +3,8 @@ import json
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
-from .models import Participant, MentorMenteeRelationship, Session, QuizResult
-from .serializers import ParticipantSerializer, SessionSerializer, MentorInfoSerializer, MenteeInfoSerializer, QuizResultSerializer
+from .models import Participant, MentorMenteeRelationship, Session, QuizResult, Badge, ParticipantBadge
+from .serializers import ParticipantSerializer, SessionSerializer, MentorInfoSerializer, MenteeInfoSerializer, QuizResultSerializer, BadgeSerializer, ParticipantBadgeSerializer
 from collections import defaultdict
 from itertools import cycle
 from django.db import transaction
@@ -12,6 +12,7 @@ from rest_framework.permissions import IsAuthenticated  # or AllowAny if public
 import os
 from dotenv import load_dotenv
 import datetime
+from django.db import models
 
 load_dotenv()
 
@@ -20,10 +21,18 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "YOUR_GEMINI_API_KEY")  # Use .env 
 @api_view(['POST'])
 def create_participant(request):
     if request.method == 'POST':
-        serializer = ParticipantSerializer(data=request.data)
+        # Ensure the approval status is set to pending for new participants
+        data = request.data.copy()
+        data['approval_status'] = 'pending'  # Force pending status for all new registrations
+        
+        serializer = ParticipantSerializer(data=data)
         if serializer.is_valid():
-            serializer.save()
-            return Response({'msg': 'Details saved successfully'}, status=status.HTTP_201_CREATED)
+            participant = serializer.save()
+            return Response({
+                'msg': 'Details saved successfully',
+                'note': 'Your registration is pending admin approval',
+                'participant': ParticipantSerializer(participant).data
+            }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET'])
@@ -127,6 +136,14 @@ def linkedin_post(request):
 
 def evaluate_student(student):
     """Score students dynamically based on their achievements."""
+    # First check approval status - only approved participants can be mentors
+    if 'approval_status' in student and student['approval_status'] != 'approved':
+        return -1000  # Non-approved participants cannot be mentors
+    
+    # Also check if deactivated - deactivated participants cannot be mentors either
+    if 'status' in student and student['status'] == 'deactivated':
+        return -1000  # Deactivated participants cannot be mentors
+    
     score = 0
     
     # Higher semester students get preference for being mentors
@@ -187,7 +204,36 @@ def evaluate_student(student):
     # Extracurricular activities show well-rounded individuals
     if student['extracurricular_activities'] == 'Yes':
         score += 5
-
+        
+    # Badge and Super Mentor factors (NEW)
+    
+    # More badges means higher mentor preference - progressive scale
+    if 'badges_earned' in student and student['badges_earned']:
+        badge_count = int(student['badges_earned'])
+        # Progressive scoring: each badge adds more points than the previous one
+        # 1 badge: 10pts, 2 badges: 25pts, 3 badges: 45pts, 4 badges: 70pts, 5+ badges: 100pts
+        badge_scores = {
+            1: 10,
+            2: 25,
+            3: 45,
+            4: 70,
+            5: 100,
+        }
+        
+        if badge_count <= 5:
+            score += badge_scores.get(badge_count, 0)
+        else:
+            # For more than 5 badges, add 100 + 15 points per additional badge
+            score += 100 + (badge_count - 5) * 15
+        
+    # Super mentors get a significant boost
+    if 'is_super_mentor' in student and student['is_super_mentor']:
+        score += 50  # Significant boost for super mentors
+    
+    # Leaderboard points add directly to score with a multiplier
+    if 'leaderboard_points' in student and student['leaderboard_points']:
+        score += int(student['leaderboard_points']) * 0.5  # Half weight of actual points
+    
     return score
 
 def has_common_interests(mentor, mentee):
@@ -256,8 +302,20 @@ def has_common_interests(mentor, mentee):
     if mentee_pref3 and (mentee_pref3 in mentor_interests or any(mentee_pref3 in tech for tech in mentor_tech_stack)):
         preference_score += 3   # Lower priority match
     
-    # Combine all findings
-    return common_tech, common_interests, preference_score
+    # NEW: Consider badge count and super mentor status
+    badge_bonus = 0
+    if 'badges_earned' in mentor and mentor['badges_earned']:
+        badge_count = int(mentor['badges_earned'])
+        # Scale the badge bonus from 0-10 based on badge count
+        badge_bonus = min(10, badge_count * 2)
+    
+    # Super mentors get higher compatibility scores
+    super_mentor_bonus = 0
+    if 'is_super_mentor' in mentor and mentor['is_super_mentor']:
+        super_mentor_bonus = 10  # Significant boost for super mentors
+    
+    # Combine all findings with new badge and super mentor bonuses
+    return common_tech, common_interests, preference_score, badge_bonus, super_mentor_bonus
 
 def match_mentors_mentees(students):
     """
@@ -271,6 +329,24 @@ def match_mentors_mentees(students):
     mentees = []
     matches = []
     unclassified = []
+    
+    # Filter out participants who haven't been approved by admin
+    approved_students = []
+    for student in students:
+        if 'approval_status' in student and student['approval_status'] == 'approved':
+            # Only include participants with approved status
+            approved_students.append(student)
+    
+    # If no approved participants, return early
+    if not approved_students:
+        return {
+            "error": "No approved participants found for matching",
+            "message": "All participants need to be approved by an admin before matching",
+            "suggestion": "Please approve some participants and try again"
+        }
+    
+    # Continue with matching using only approved participants
+    students = approved_students
 
     # If there are very few students to match (like 1 or 2), we may need to supplement
     # them with existing matched participants to create proper mentor/mentee roles
@@ -393,7 +469,7 @@ def match_mentors_mentees(students):
                 continue
                 
             # Get common interests
-            common_tech, common_interests, preference_score = has_common_interests(mentor, mentee)
+            common_tech, common_interests, preference_score, badge_bonus, super_mentor_bonus = has_common_interests(mentor, mentee)
             
             # Calculate match score based on common interests
             tech_score = len(common_tech) * 3  # Weight tech stack higher
@@ -409,6 +485,9 @@ def match_mentors_mentees(students):
             # Total compatibility score
             compatibility_score = tech_score + interest_score + branch_score + preference_match_score
             
+            # Add badge and super mentor bonuses
+            compatibility_score += badge_bonus + super_mentor_bonus
+            
             match_scores.append({
                 'mentor': mentor,
                 'mentee': mentee,
@@ -416,6 +495,8 @@ def match_mentors_mentees(students):
                 'common_tech': common_tech,
                 'common_interests': common_interests,
                 'preference_score': preference_score,
+                'badge_bonus': badge_bonus,
+                'super_mentor_bonus': super_mentor_bonus,
                 'compatibility': "high" if compatibility_score >= 15 else 
                                  "medium" if compatibility_score >= 7 else "low"
             })
@@ -441,7 +522,9 @@ def match_mentors_mentees(students):
                 "registration_no": mentor['registration_no'],
                 "semester": mentor['semester'],
                 "branch": mentor['branch'],
-                "tech_stack": mentor['tech_stack']
+                "tech_stack": mentor['tech_stack'],
+                "badges_earned": mentor.get('badges_earned', 0),
+                "is_super_mentor": mentor.get('is_super_mentor', False)
             },
             "mentee": {
                 "name": mentee['name'],
@@ -450,10 +533,12 @@ def match_mentors_mentees(students):
                 "branch": mentee['branch'],
                 "tech_stack": mentee['tech_stack']
             },
-            "match_quality": match['compatibility'],
-            "common_tech": list(match['common_tech']),
-            "common_interests": list(match['common_interests']),
-            "preference_score": match['preference_score']
+            "match_quality": "assigned",
+            "common_tech": [],
+            "common_interests": [],
+            "preference_score": 0,
+            "badge_bonus": 0,
+            "super_mentor_bonus": 0
         })
         
         matched_mentees.add(mentee['registration_no'])
@@ -487,7 +572,9 @@ def match_mentors_mentees(students):
                         "registration_no": mentor['registration_no'],
                         "semester": mentor['semester'],
                         "branch": mentor['branch'],
-                        "tech_stack": mentor['tech_stack']
+                        "tech_stack": mentor['tech_stack'],
+                        "badges_earned": mentor.get('badges_earned', 0),
+                        "is_super_mentor": mentor.get('is_super_mentor', False)
                     },
                     "mentee": {
                         "name": mentee['name'],
@@ -499,7 +586,9 @@ def match_mentors_mentees(students):
                     "match_quality": "assigned",
                     "common_tech": [],
                     "common_interests": [],
-                    "preference_score": 0
+                    "preference_score": 0,
+                    "badge_bonus": 0,
+                    "super_mentor_bonus": 0
                 })
                 
                 matched_mentees.add(mentee['registration_no'])
@@ -528,7 +617,9 @@ def match_mentors_mentees(students):
                     "registration_no": lead_mentor['registration_no'],
                     "semester": lead_mentor['semester'],
                     "branch": lead_mentor['branch'],
-                    "tech_stack": lead_mentor['tech_stack']
+                    "tech_stack": lead_mentor['tech_stack'],
+                    "badges_earned": lead_mentor.get('badges_earned', 0),
+                    "is_super_mentor": lead_mentor.get('is_super_mentor', False)
                 },
                 "mentee": {
                     "name": mentee_mentor['name'],
@@ -540,7 +631,9 @@ def match_mentors_mentees(students):
                 "match_quality": "peer-mentor",
                 "common_tech": [],
                 "common_interests": [],
-                "preference_score": 0
+                "preference_score": 0,
+                "badge_bonus": 0,
+                "super_mentor_bonus": 0
             })
             
             mentor_mentee_count[lead_mentor['registration_no']] += 1
@@ -569,7 +662,9 @@ def match_mentors_mentees(students):
                             "registration_no": best_mentor['registration_no'],
                             "semester": best_mentor['semester'],
                             "branch": best_mentor['branch'],
-                            "tech_stack": best_mentor['tech_stack']
+                            "tech_stack": best_mentor['tech_stack'],
+                            "badges_earned": best_mentor.get('badges_earned', 0),
+                            "is_super_mentor": best_mentor.get('is_super_mentor', False)
                         },
                         "mentee": {
                             "name": remaining_mentor['name'],
@@ -581,7 +676,9 @@ def match_mentors_mentees(students):
                         "match_quality": "peer-mentor",
                         "common_tech": [],
                         "common_interests": [],
-                        "preference_score": 0
+                        "preference_score": 0,
+                        "badge_bonus": 0,
+                        "super_mentor_bonus": 0
                     })
                     
                     mentor_mentee_count[best_mentor['registration_no']] += 1
@@ -617,13 +714,16 @@ def match_mentors_mentees(students):
 @api_view(['GET'])
 def match_participants(request):
     """Endpoint to trigger mentor-mentee matching for new/unmatched participants only."""
-    # Get all participants
-    participants = Participant.objects.all()
+    # Get all APPROVED participants
+    participants = Participant.objects.filter(approval_status='approved')
     serializer = ParticipantSerializer(participants, many=True)
     students = serializer.data
     
     if not students:
-        return Response({"error": "No participants found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response({
+            "error": "No approved participants found",
+            "message": "All participants need to be approved by an admin before matching"
+        }, status=status.HTTP_404_NOT_FOUND)
         
     # Get participants who are already in relationships
     mentors_in_relationships = MentorMenteeRelationship.objects.values_list('mentor__registration_no', flat=True).distinct()
@@ -638,7 +738,7 @@ def match_participants(request):
     # Check if we have any unmatched participants
     if not unmatched_students:
         return Response({
-            "message": "All participants are already matched",
+            "message": "All approved participants are already matched",
             "matched_count": len(matched_reg_nos),
             "total_count": len(students)
         }, status=status.HTTP_200_OK)
@@ -986,6 +1086,19 @@ def create_relationship(request):
                 "error": "Mentor or mentee not found"
             }, status=status.HTTP_404_NOT_FOUND)
             
+        # Check if both participants are approved
+        if mentor.approval_status != 'approved':
+            return Response({
+                "error": f"Mentor {mentor.name} has not been approved by admin",
+                "current_status": mentor.approval_status
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        if mentee.approval_status != 'approved':
+            return Response({
+                "error": f"Mentee {mentee.name} has not been approved by admin",
+                "current_status": mentee.approval_status
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
         # Check if relationship already exists
         if MentorMenteeRelationship.objects.filter(mentor=mentor, mentee=mentee).exists():
             return Response({
@@ -1049,10 +1162,19 @@ def update_relationship(request, relationship_id):
         mentor_reg_no = request.data.get('mentor_registration_no')
         mentee_reg_no = request.data.get('mentee_registration_no')
         
+        new_mentor = None
+        new_mentee = None
+        
         if mentor_reg_no:
             try:
-                mentor = Participant.objects.get(registration_no=mentor_reg_no)
-                relationship.mentor = mentor
+                new_mentor = Participant.objects.get(registration_no=mentor_reg_no)
+                # Check approval status
+                if new_mentor.approval_status != 'approved':
+                    return Response({
+                        "error": f"Mentor {new_mentor.name} has not been approved by admin",
+                        "current_status": new_mentor.approval_status
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                relationship.mentor = new_mentor
             except Participant.DoesNotExist:
                 return Response({
                     "error": "Mentor not found"
@@ -1060,8 +1182,14 @@ def update_relationship(request, relationship_id):
                 
         if mentee_reg_no:
             try:
-                mentee = Participant.objects.get(registration_no=mentee_reg_no)
-                relationship.mentee = mentee
+                new_mentee = Participant.objects.get(registration_no=mentee_reg_no)
+                # Check approval status
+                if new_mentee.approval_status != 'approved':
+                    return Response({
+                        "error": f"Mentee {new_mentee.name} has not been approved by admin",
+                        "current_status": new_mentee.approval_status
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                relationship.mentee = new_mentee
             except Participant.DoesNotExist:
                 return Response({
                     "error": "Mentee not found"
@@ -1281,7 +1409,7 @@ def generate_quiz(request):
         quiz = parse_quiz_response(quiz_text)
         
         # If mentee_id is provided, create a pending quiz for them
-        if mentee and relationship_validated:
+        if mentee and mentor and relationship_validated:
             # Create a pending quiz result with score of 0
             pending_quiz = QuizResult(
                 participant=mentee,
@@ -1304,9 +1432,41 @@ def generate_quiz(request):
                     'name': mentee.name,
                     'registration_no': mentee.registration_no
                 },
-                'mentor': mentor_id,
+                'mentor': {
+                    'name': mentor.name,
+                    'registration_no': mentor.registration_no
+                },
                 'status': 'pending',
                 'message': f'Quiz assigned to {mentee.name} successfully'
+            }, status=200)
+        
+        # If mentor is provided but no mentee, also track that the mentor generated a quiz
+        # but mark it as not assigned to anyone specific
+        elif mentor and not mentee:
+            # Create a placeholder "mentor quiz" that isn't assigned to a mentee
+            mentor_quiz = QuizResult(
+                participant=mentor,  # The mentor is the participant
+                mentor=mentor,       # The mentor is also the creator
+                quiz_topic=prompt,
+                score=0,
+                total_questions=len(quiz),
+                percentage=0,
+                quiz_data=quiz,
+                quiz_answers={},
+                result_details=[],
+                status='unassigned'  # Special status for tracking mentor-generated quizzes
+            )
+            mentor_quiz.save()
+            
+            return Response({
+                'quiz': quiz,
+                'quiz_id': mentor_quiz.id,
+                'mentor': {
+                    'name': mentor.name,
+                    'registration_no': mentor.registration_no
+                },
+                'status': 'unassigned',
+                'message': 'Quiz generated but not assigned to any mentee'
             }, status=200)
         
         # If no mentee_id, just return the quiz
@@ -1515,3 +1675,919 @@ def delete_quiz(request, quiz_id):
         'message': 'Quiz deleted successfully',
         'quiz': quiz_details
     }, status=200)
+
+# Admin approval functions
+
+@api_view(['POST'])
+def update_participant_approval(request):
+    """Update the approval status of a participant (admin only)"""
+    registration_no = request.data.get('registration_no')
+    new_status = request.data.get('approval_status')
+    
+    if not registration_no or not new_status:
+        return Response({
+            'error': 'Registration number and approval status are required'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    if new_status not in ['pending', 'approved', 'rejected']:
+        return Response({
+            'error': 'Invalid approval status. Must be pending, approved, or rejected'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        participant = Participant.objects.get(registration_no=registration_no)
+        participant.approval_status = new_status
+        
+        # If rejected, store the reason
+        if new_status == 'rejected':
+            reason = request.data.get('reason', '')
+            if not reason:
+                return Response({
+                    'error': 'Reason is required when rejecting a participant'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            participant.deactivation_reason = reason
+        
+        participant.save()
+        
+        return Response({
+            'message': f'Participant approval status updated to {new_status}',
+            'participant': ParticipantSerializer(participant).data
+        }, status=status.HTTP_200_OK)
+        
+    except Participant.DoesNotExist:
+        return Response({
+            'error': f'Participant with registration number {registration_no} not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['GET'])
+def list_pending_approvals(request):
+    """List all participants with pending approval status (admin only)"""
+    pending_participants = Participant.objects.filter(approval_status='pending')
+    serializer = ParticipantSerializer(pending_participants, many=True)
+    
+    return Response({
+        'count': pending_participants.count(),
+        'participants': serializer.data
+    }, status=status.HTTP_200_OK)
+
+@api_view(['GET'])
+def get_approval_status(request, registration_no):
+    """Get the approval status of a specific participant"""
+    try:
+        participant = Participant.objects.get(registration_no=registration_no)
+        return Response({
+            'registration_no': registration_no,
+            'approval_status': participant.approval_status,
+            'reason': participant.deactivation_reason if participant.approval_status == 'rejected' else None
+        }, status=status.HTTP_200_OK)
+    except Participant.DoesNotExist:
+        return Response({
+            'error': f'Participant with registration number {registration_no} not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+
+# Profile status management functions
+
+@api_view(['POST'])
+def update_participant_status(request):
+    """Update the status of a participant (active, graduated, deactivated)"""
+    registration_no = request.data.get('registration_no')
+    new_status = request.data.get('status')
+    
+    if not registration_no or not new_status:
+        return Response({
+            'error': 'Registration number and status are required'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    if new_status not in ['active', 'graduated', 'deactivated']:
+        return Response({
+            'error': 'Invalid status. Must be active, graduated, or deactivated'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        participant = Participant.objects.get(registration_no=registration_no)
+        old_status = participant.status
+        participant.status = new_status
+        
+        # If deactivated, store the reason
+        if new_status == 'deactivated':
+            reason = request.data.get('reason', '')
+            if not reason:
+                return Response({
+                    'error': 'Reason is required when deactivating a participant'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            participant.deactivation_reason = reason
+        
+        participant.save()
+        
+        # Handle relationships when deactivating a mentor
+        if new_status == 'deactivated' and MentorMenteeRelationship.objects.filter(mentor=participant).exists():
+            # Get all mentees for this mentor
+            mentees = [rel.mentee for rel in MentorMenteeRelationship.objects.filter(mentor=participant)]
+            
+            # Delete the relationships
+            MentorMenteeRelationship.objects.filter(mentor=participant).delete()
+            
+            return Response({
+                'message': f'Participant status updated from {old_status} to {new_status}',
+                'participant': ParticipantSerializer(participant).data,
+                'note': f'{len(mentees)} mentee relationships have been removed'
+            }, status=status.HTTP_200_OK)
+        
+        return Response({
+            'message': f'Participant status updated from {old_status} to {new_status}',
+            'participant': ParticipantSerializer(participant).data
+        }, status=status.HTTP_200_OK)
+        
+    except Participant.DoesNotExist:
+        return Response({
+            'error': f'Participant with registration number {registration_no} not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['GET'])
+def list_participants_by_status(request, status_filter):
+    """List all participants with a specific status"""
+    if status_filter not in ['active', 'graduated', 'deactivated', 'all']:
+        return Response({
+            'error': 'Invalid status filter. Must be active, graduated, deactivated, or all'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    if status_filter == 'all':
+        participants = Participant.objects.all()
+    else:
+        participants = Participant.objects.filter(status=status_filter)
+    
+    serializer = ParticipantSerializer(participants, many=True)
+    
+    return Response({
+        'count': participants.count(),
+        'status': status_filter,
+        'participants': serializer.data
+    }, status=status.HTTP_200_OK)
+
+# Badge and super mentor functions
+
+@api_view(['POST'])
+def create_badge(request):
+    """Create a new badge (admin only)"""
+    serializer = BadgeSerializer(data=request.data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+def list_badges(request):
+    """List all available badges"""
+    badges = Badge.objects.all()
+    serializer = BadgeSerializer(badges, many=True)
+    return Response(serializer.data)
+
+@api_view(['POST'])
+def award_badge(request):
+    """Award a badge to a participant (admin only)"""
+    participant_id = request.data.get('participant_id')
+    badge_id = request.data.get('badge_id')
+    
+    if not participant_id or not badge_id:
+        return Response({
+            'error': 'Participant ID and badge ID are required'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        participant = Participant.objects.get(registration_no=participant_id)
+        badge = Badge.objects.get(id=badge_id)
+        
+        # Check if participant already has this badge
+        if ParticipantBadge.objects.filter(participant=participant, badge=badge).exists():
+            return Response({
+                'error': f'Participant already has the badge "{badge.name}"'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Award the badge
+        participant_badge = ParticipantBadge.objects.create(
+            participant=participant,
+            badge=badge,
+            is_claimed=False
+        )
+        
+        return Response({
+            'message': f'Badge "{badge.name}" awarded to {participant.name}',
+            'participant_badge': ParticipantBadgeSerializer(participant_badge).data
+        }, status=status.HTTP_201_CREATED)
+        
+    except Participant.DoesNotExist:
+        return Response({
+            'error': f'Participant with ID {participant_id} not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Badge.DoesNotExist:
+        return Response({
+            'error': f'Badge with ID {badge_id} not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['POST'])
+def claim_badge(request):
+    """Claim a badge that has been awarded (participant action)"""
+    participant_id = request.data.get('participant_id')
+    badge_id = request.data.get('badge_id')
+    
+    if not participant_id or not badge_id:
+        return Response({
+            'error': 'Participant ID and badge ID are required'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        participant = Participant.objects.get(registration_no=participant_id)
+        badge = Badge.objects.get(id=badge_id)
+        
+        try:
+            participant_badge = ParticipantBadge.objects.get(
+                participant=participant,
+                badge=badge,
+                is_claimed=False  # Only unclaimed badges can be claimed
+            )
+        except ParticipantBadge.DoesNotExist:
+            return Response({
+                'error': 'This badge is either not awarded to you or already claimed'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Mark the badge as claimed
+        participant_badge.is_claimed = True
+        participant_badge.claimed_date = datetime.datetime.now()
+        participant_badge.save()
+        
+        # Update participant's badges count
+        participant.badges_earned += 1
+        
+        # Check if participant should be promoted to super mentor
+        if participant.badges_earned >= 5:
+            participant.is_super_mentor = True
+        
+        participant.save()
+        
+        return Response({
+            'message': f'Badge "{badge.name}" claimed successfully',
+            'participant_badge': ParticipantBadgeSerializer(participant_badge).data,
+            'badges_earned': participant.badges_earned,
+            'is_super_mentor': participant.is_super_mentor
+        }, status=status.HTTP_200_OK)
+        
+    except Participant.DoesNotExist:
+        return Response({
+            'error': f'Participant with ID {participant_id} not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Badge.DoesNotExist:
+        return Response({
+            'error': f'Badge with ID {badge_id} not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['GET'])
+def get_participant_badges(request, registration_no):
+    """Get all badges for a specific participant"""
+    try:
+        participant = Participant.objects.get(registration_no=registration_no)
+        participant_badges = ParticipantBadge.objects.filter(participant=participant)
+        serializer = ParticipantBadgeSerializer(participant_badges, many=True)
+        
+        return Response({
+            'participant': {
+                'name': participant.name,
+                'registration_no': participant.registration_no,
+                'badges_earned': participant.badges_earned,
+                'is_super_mentor': participant.is_super_mentor
+            },
+            'badges': serializer.data
+        }, status=status.HTTP_200_OK)
+        
+    except Participant.DoesNotExist:
+        return Response({
+            'error': f'Participant with registration number {registration_no} not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['POST'])
+def update_leaderboard_points(request):
+    """Update a participant's leaderboard points"""
+    registration_no = request.data.get('registration_no')
+    points = request.data.get('points')
+    
+    if not registration_no or points is None:
+        return Response({
+            'error': 'Registration number and points are required'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        participant = Participant.objects.get(registration_no=registration_no)
+        old_points = participant.leaderboard_points
+        participant.leaderboard_points = int(points)
+        participant.save()
+        
+        # Check if participant qualifies for any badges based on points
+        eligible_badges = Badge.objects.filter(points_required__lte=participant.leaderboard_points)
+        
+        # Get badges participant already has
+        existing_badge_ids = ParticipantBadge.objects.filter(participant=participant).values_list('badge_id', flat=True)
+        
+        # Award new eligible badges
+        newly_awarded = []
+        for badge in eligible_badges:
+            if badge.id not in existing_badge_ids:
+                ParticipantBadge.objects.create(
+                    participant=participant,
+                    badge=badge,
+                    is_claimed=False
+                )
+                newly_awarded.append(badge.name)
+        
+        response_data = {
+            'message': f'Leaderboard points updated from {old_points} to {points}',
+            'participant': {
+                'name': participant.name,
+                'registration_no': participant.registration_no,
+                'leaderboard_points': participant.leaderboard_points
+            }
+        }
+        
+        if newly_awarded:
+            response_data['newly_eligible_badges'] = newly_awarded
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+        
+    except Participant.DoesNotExist:
+        return Response({
+            'error': f'Participant with registration number {registration_no} not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+
+# Leaderboard management functions
+
+@api_view(['POST'])
+def sync_leaderboard_points(request):
+    """Sync the leaderboard points from the frontend to store in the database"""
+    try:
+        leaderboard_data = request.data.get('leaderboard_data', [])
+        
+        if not leaderboard_data:
+            return Response({
+                'error': 'No leaderboard data provided'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        updated_participants = []
+        
+        for entry in leaderboard_data:
+            participant_id = entry.get('id')
+            score = entry.get('score', 0)
+            
+            if not participant_id:
+                continue
+                
+            try:
+                participant = Participant.objects.get(registration_no=participant_id)
+                participant.leaderboard_points = score
+                participant.save()
+                
+                # Check if participant qualifies for any badges based on points
+                eligible_badges = Badge.objects.filter(points_required__lte=score)
+                
+                # Get badges participant already has
+                existing_badge_ids = ParticipantBadge.objects.filter(participant=participant).values_list('badge_id', flat=True)
+                
+                # Award new eligible badges
+                newly_awarded = []
+                for badge in eligible_badges:
+                    if badge.id not in existing_badge_ids:
+                        ParticipantBadge.objects.create(
+                            participant=participant,
+                            badge=badge,
+                            is_claimed=False
+                        )
+                        newly_awarded.append(badge.name)
+                
+                participant_data = {
+                    'registration_no': participant.registration_no,
+                    'name': participant.name,
+                    'leaderboard_points': participant.leaderboard_points,
+                    'badges_earned': participant.badges_earned,
+                    'is_super_mentor': participant.is_super_mentor
+                }
+                
+                if newly_awarded:
+                    participant_data['newly_awarded_badges'] = newly_awarded
+                    
+                updated_participants.append(participant_data)
+                
+            except Participant.DoesNotExist:
+                # Skip participants that don't exist in the database
+                continue
+        
+        return Response({
+            'message': f'Successfully updated leaderboard points for {len(updated_participants)} participants',
+            'updated_participants': updated_participants
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response({
+            'error': 'Failed to sync leaderboard points',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+def calculate_leaderboard_points(request):
+    """
+    Calculate leaderboard points for all participants based on activities and store in the database.
+    This is a server-side calculation that can be used as an alternative to frontend calculation.
+    """
+    try:
+        # Get all approved and active participants
+        participants = Participant.objects.filter(
+            approval_status='approved',
+            status='active'
+        )
+        
+        updated_participants = []
+        
+        for participant in participants:
+            # Initialize score components
+            sessions_score = 0
+            quiz_score = 0
+            mentee_score = 0
+            quiz_assignment_score = 0
+            
+            # Calculate score based on sessions 
+            # Each session is worth 100 points
+            sessions = Session.objects.filter(mentor=participant).count()
+            sessions_as_participant = Session.objects.filter(participants=participant).count()
+            sessions_score = (sessions * 100) + (sessions_as_participant * 50)
+            
+            # Check if participant is a mentor (has mentees)
+            mentor_relationships = MentorMenteeRelationship.objects.filter(mentor=participant)
+            is_mentor = mentor_relationships.exists()
+            
+            # NEW: Points for quizzes assigned by mentor
+            # Each quiz assigned is worth 30 points plus bonus points based on mentee performance
+            assigned_quizzes = QuizResult.objects.filter(mentor=participant)
+            assigned_quiz_count = assigned_quizzes.count()
+            quiz_assignment_score = assigned_quiz_count * 30
+            
+            # Add bonus points for completed quizzes with good performance
+            completed_assigned_quizzes = assigned_quizzes.filter(status='completed')
+            if completed_assigned_quizzes.exists():
+                # Add bonus for each completed quiz based on mentee's performance
+                for quiz in completed_assigned_quizzes:
+                    # Higher mentee score = more points for mentor (10-30 points per quiz)
+                    performance_bonus = min(30, int(quiz.percentage / 3.33))
+                    quiz_assignment_score += performance_bonus
+            
+            if is_mentor:
+                # For mentors: Add points for each mentee and their quiz performance
+                mentees = [rel.mentee for rel in mentor_relationships]
+                mentee_count = len(mentees)
+                mentee_score = mentee_count * 200  # Base score for each mentee
+                
+                # Add score for mentee quiz performance
+                for mentee in mentees:
+                    # Get completed quizzes for this mentee
+                    quizzes = QuizResult.objects.filter(
+                        participant=mentee,
+                        status='completed'
+                    )
+                    
+                    if quizzes.exists():
+                        quiz_count = quizzes.count()
+                        avg_score = quizzes.aggregate(models.Avg('percentage'))['percentage__avg'] or 0
+                        
+                        # Add points for each quiz and bonus for good performance
+                        quiz_score += (quiz_count * 20) + (avg_score * 2)
+            else:
+                # For mentees: Calculate scores based on their own quizzes
+                quizzes = QuizResult.objects.filter(
+                    participant=participant,
+                    status='completed'
+                )
+                
+                if quizzes.exists():
+                    quiz_count = quizzes.count()
+                    avg_score = quizzes.aggregate(models.Avg('percentage'))['percentage__avg'] or 0
+                    
+                    # Add points for each quiz (50 points each) and bonus for good performance
+                    quiz_score = (quiz_count * 50) + (avg_score * 5)
+            
+            # Calculate total score - include quiz assignment points
+            total_score = sessions_score + quiz_score + mentee_score + quiz_assignment_score
+            
+            # Add bonus for badges and super mentor status
+            if participant.badges_earned > 0:
+                total_score += participant.badges_earned * 100
+                
+            if participant.is_super_mentor:
+                total_score += 500  # Super mentor bonus
+            
+            # Update participant's leaderboard points
+            participant.leaderboard_points = total_score
+            participant.save()
+            
+            # Check for badge eligibility based on new score
+            eligible_badges = Badge.objects.filter(points_required__lte=total_score)
+            existing_badge_ids = ParticipantBadge.objects.filter(participant=participant).values_list('badge_id', flat=True)
+            
+            # Award new eligible badges
+            newly_awarded = []
+            for badge in eligible_badges:
+                if badge.id not in existing_badge_ids:
+                    ParticipantBadge.objects.create(
+                        participant=participant,
+                        badge=badge,
+                        is_claimed=False
+                    )
+                    newly_awarded.append(badge.name)
+            
+            # Add to results
+            participant_data = {
+                'registration_no': participant.registration_no,
+                'name': participant.name,
+                'role': 'mentor' if is_mentor else 'mentee',
+                'sessions_score': sessions_score,
+                'quiz_score': quiz_score,
+                'mentee_score': mentee_score,
+                'quiz_assignment_score': quiz_assignment_score,  # New field for assigned quizzes
+                'total_score': total_score,
+                'badges_earned': participant.badges_earned,
+                'is_super_mentor': participant.is_super_mentor,
+                'assigned_quizzes': assigned_quiz_count
+            }
+            
+            if newly_awarded:
+                participant_data['newly_awarded_badges'] = newly_awarded
+                
+            updated_participants.append(participant_data)
+        
+        # Sort by total score (highest first)
+        updated_participants.sort(key=lambda p: p['total_score'], reverse=True)
+        
+        return Response({
+            'message': f'Successfully calculated leaderboard points for {len(updated_participants)} participants',
+            'updated_participants': updated_participants
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response({
+            'error': 'Failed to calculate leaderboard points',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+def get_leaderboard(request):
+    """Get the current leaderboard with participants sorted by leaderboard points"""
+    try:
+        # Get filter parameters
+        role = request.query_params.get('role', 'all')  # 'mentor', 'mentee', or 'all'
+        search = request.query_params.get('search', '')
+        
+        # Get approved and active participants
+        participants = Participant.objects.filter(
+            approval_status='approved',
+            status='active'
+        ).order_by('-leaderboard_points')
+        
+        # Apply role filter if specified
+        if role == 'mentor':
+            # Get registration numbers of all mentors
+            mentor_reg_nos = MentorMenteeRelationship.objects.values_list('mentor__registration_no', flat=True).distinct()
+            participants = participants.filter(registration_no__in=mentor_reg_nos)
+        elif role == 'mentee':
+            # Get registration numbers of all mentees
+            mentee_reg_nos = MentorMenteeRelationship.objects.values_list('mentee__registration_no', flat=True).distinct()
+            participants = participants.filter(registration_no__in=mentee_reg_nos)
+        
+        # Apply search filter if provided
+        if search:
+            participants = participants.filter(name__icontains=search)
+        
+        # Serialize the data
+        leaderboard_data = []
+        
+        for participant in participants:
+            # Determine role
+            is_mentor = MentorMenteeRelationship.objects.filter(mentor=participant).exists()
+            is_mentee = MentorMenteeRelationship.objects.filter(mentee=participant).exists()
+            
+            role = 'mentor' if is_mentor else 'mentee' if is_mentee else 'unknown'
+            
+            # Get mentor info for mentees
+            mentor_name = 'Not assigned'
+            mentor_id = None
+            if is_mentee:
+                relationship = MentorMenteeRelationship.objects.filter(mentee=participant).first()
+                if relationship:
+                    mentor_name = relationship.mentor.name
+                    mentor_id = relationship.mentor.registration_no
+            
+            # Get mentee count for mentors
+            mentees_count = 0
+            if is_mentor:
+                mentees_count = MentorMenteeRelationship.objects.filter(mentor=participant).count()
+            
+            # Get sessions
+            sessions_attended = Session.objects.filter(
+                models.Q(mentor=participant) | models.Q(participants=participant)
+            ).distinct().count()
+            
+            # Get quizzes completed by the participant
+            completed_quizzes = QuizResult.objects.filter(
+                participant=participant, 
+                status='completed'
+            )
+            quiz_count = completed_quizzes.count()
+            avg_score = completed_quizzes.aggregate(models.Avg('percentage'))['percentage__avg'] or 0
+            
+            # Get quizzes assigned by the participant (if they're a mentor)
+            assigned_quizzes = QuizResult.objects.filter(mentor=participant)
+            assigned_quiz_count = assigned_quizzes.count()
+            completed_assigned_count = assigned_quizzes.filter(status='completed').count()
+            
+            # Calculate average performance of assigned quizzes
+            avg_assigned_score = 0
+            if completed_assigned_count > 0:
+                avg_assigned_score = assigned_quizzes.filter(status='completed').aggregate(
+                    models.Avg('percentage')
+                )['percentage__avg'] or 0
+            
+            # Add to leaderboard
+            leaderboard_data.append({
+                'id': participant.registration_no,
+                'name': participant.name,
+                'role': role,
+                'mentorName': mentor_name,
+                'mentorId': mentor_id,
+                'menteesCount': mentees_count,
+                'branch': participant.branch,
+                'semester': participant.semester,
+                'techStack': participant.tech_stack,
+                'score': participant.leaderboard_points,
+                'sessionsAttended': sessions_attended,
+                'tasksCompleted': quiz_count,
+                'averageScore': round(avg_score, 2),
+                'feedbackGiven': calculate_feedback_level(avg_score),
+                'badges_earned': participant.badges_earned,
+                'is_super_mentor': participant.is_super_mentor,
+                # New fields for assigned quizzes
+                'assignedQuizzes': assigned_quiz_count,
+                'completedAssignedQuizzes': completed_assigned_count,
+                'averageAssignedScore': round(avg_assigned_score, 2)
+            })
+        
+        return Response(leaderboard_data, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response({
+            'error': 'Failed to fetch leaderboard data',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+def calculate_feedback_level(average_score):
+    """Calculate feedback level based on average score"""
+    if average_score >= 90:
+        return "Excellent"
+    if average_score >= 80:
+        return "Very Good"
+    if average_score >= 70:
+        return "Good"
+    if average_score >= 60:
+        return "Satisfactory"
+    return "Needs Improvement"
+
+@api_view(['POST'])
+def unclaim_badge(request):
+    """Unclaim/delete a claimed badge from a participant"""
+    try:
+        participant_id = request.data.get('participant_id')
+        badge_id = request.data.get('badge_id')
+        
+        if not participant_id or not badge_id:
+            return Response({
+                'error': 'Participant ID and badge ID are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            participant = Participant.objects.get(registration_no=participant_id)
+            badge = Badge.objects.get(id=badge_id)
+        except Participant.DoesNotExist:
+            return Response({
+                'error': f'Participant with ID {participant_id} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Badge.DoesNotExist:
+            return Response({
+                'error': f'Badge with ID {badge_id} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check if the participant has this badge
+        try:
+            participant_badge = ParticipantBadge.objects.get(
+                participant=participant,
+                badge=badge
+            )
+        except ParticipantBadge.DoesNotExist:
+            return Response({
+                'error': f'Participant does not have this badge'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check if the badge was claimed
+        was_claimed = participant_badge.is_claimed
+        
+        # Delete the participant badge
+        participant_badge.delete()
+        
+        # If the badge was claimed, decrease the participant's claimed badge count
+        if was_claimed:
+            participant.badges_earned = max(0, participant.badges_earned - 1)
+            
+            # If the participant falls below 5 badges, they lose super mentor status
+            if participant.badges_earned < 5 and participant.is_super_mentor:
+                participant.is_super_mentor = False
+                
+            participant.save()
+        
+        return Response({
+            'message': f'Badge "{badge.name}" has been removed from {participant.name}',
+            'participant': {
+                'name': participant.name,
+                'registration_no': participant.registration_no,
+                'badges_earned': participant.badges_earned,
+                'is_super_mentor': participant.is_super_mentor
+            }
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response({
+            'error': 'Failed to unclaim badge',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['DELETE'])
+def delete_participant_badge(request):
+    """Completely delete a badge from a participant (admin only)"""
+    try:
+        participant_id = request.data.get('participant_id')
+        badge_id = request.data.get('badge_id')
+        force = request.data.get('force', False)  # Force delete even if claimed
+        
+        if not participant_id or not badge_id:
+            return Response({
+                'error': 'Participant ID and badge ID are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            participant = Participant.objects.get(registration_no=participant_id)
+            badge = Badge.objects.get(id=badge_id)
+        except Participant.DoesNotExist:
+            return Response({
+                'error': f'Participant with ID {participant_id} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Badge.DoesNotExist:
+            return Response({
+                'error': f'Badge with ID {badge_id} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check if the participant has this badge
+        try:
+            participant_badge = ParticipantBadge.objects.get(
+                participant=participant,
+                badge=badge
+            )
+        except ParticipantBadge.DoesNotExist:
+            return Response({
+                'error': f'Participant does not have this badge'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # If the badge is claimed and force is not True, prevent deletion
+        if participant_badge.is_claimed and not force:
+            return Response({
+                'error': 'Cannot delete a claimed badge. Unclaim it first or use force=true.',
+                'claimed': True
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if the badge was claimed
+        was_claimed = participant_badge.is_claimed
+        
+        # Delete the participant badge
+        participant_badge.delete()
+        
+        # If the badge was claimed, decrease the participant's claimed badge count
+        if was_claimed:
+            participant.badges_earned = max(0, participant.badges_earned - 1)
+            
+            # If the participant falls below 5 badges, they lose super mentor status
+            if participant.badges_earned < 5 and participant.is_super_mentor:
+                participant.is_super_mentor = False
+                
+            participant.save()
+        
+        return Response({
+            'message': f'Badge "{badge.name}" has been deleted from {participant.name}',
+            'was_claimed': was_claimed,
+            'participant': {
+                'name': participant.name,
+                'registration_no': participant.registration_no,
+                'badges_earned': participant.badges_earned,
+                'is_super_mentor': participant.is_super_mentor
+            }
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response({
+            'error': 'Failed to delete badge',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['DELETE'])
+def delete_badge_type(request, badge_id):
+    """Delete a badge type completely from the system (admin only)"""
+    try:
+        try:
+            badge = Badge.objects.get(id=badge_id)
+        except Badge.DoesNotExist:
+            return Response({
+                'error': f'Badge with ID {badge_id} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check if there are any claimed instances of this badge
+        claimed_instances = ParticipantBadge.objects.filter(
+            badge=badge,
+            is_claimed=True
+        ).count()
+        
+        # Get total number of badge instances
+        total_instances = ParticipantBadge.objects.filter(badge=badge).count()
+        
+        # Check if force delete is requested
+        force_delete = request.data.get('force', False)
+        
+        # If there are claimed instances and force is not True, prevent deletion
+        if claimed_instances > 0 and not force_delete:
+            return Response({
+                'error': 'Cannot delete badge type. There are participants who have claimed this badge.',
+                'claimed_instances': claimed_instances,
+                'total_instances': total_instances,
+                'badge': {
+                    'id': badge.id,
+                    'name': badge.name
+                },
+                'force_required': True
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Store badge info for response
+        badge_info = {
+            'id': badge.id,
+            'name': badge.name,
+            'description': badge.description,
+            'points_required': badge.points_required
+        }
+        
+        # If we're force deleting, we need to update participant badges_earned counts
+        if claimed_instances > 0:
+            # Get all participants who claimed this badge
+            affected_participants = []
+            claimed_badges = ParticipantBadge.objects.filter(
+                badge=badge,
+                is_claimed=True
+            )
+            
+            for claimed_badge in claimed_badges:
+                participant = claimed_badge.participant
+                
+                # Decrement badge count
+                participant.badges_earned = max(0, participant.badges_earned - 1)
+                
+                # Update super mentor status if needed
+                if participant.badges_earned < 5 and participant.is_super_mentor:
+                    participant.is_super_mentor = False
+                
+                participant.save()
+                
+                affected_participants.append({
+                    'registration_no': participant.registration_no,
+                    'name': participant.name,
+                    'new_badge_count': participant.badges_earned,
+                    'is_super_mentor': participant.is_super_mentor
+                })
+        
+        # First, delete all ParticipantBadge instances
+        deleted_instances = ParticipantBadge.objects.filter(badge=badge).delete()[0]
+        
+        # Then, delete the badge type itself
+        badge.delete()
+        
+        response_data = {
+            'message': f'Badge type "{badge_info["name"]}" has been deleted',
+            'badge': badge_info,
+            'instances_deleted': deleted_instances
+        }
+        
+        if claimed_instances > 0:
+            response_data['affected_participants'] = affected_participants
+            response_data['claimed_instances_removed'] = claimed_instances
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response({
+            'error': 'Failed to delete badge type',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

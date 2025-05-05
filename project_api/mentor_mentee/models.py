@@ -12,6 +12,18 @@ class Participant(models.Model):
     YES_NO_CHOICES = [('yes', 'Yes'), ('no', 'No')]
     LEVEL_CHOICES = [('International', 'International'), ('National', 'National'), ('College', 'College'), ('Conferences', 'Conferences'), ('None', 'None')]
 
+    STATUS_CHOICES = (
+        ('active', 'Active'),
+        ('graduated', 'Graduated'),
+        ('deactivated', 'Deactivated'),
+    )
+    
+    APPROVAL_STATUS = (
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    )
+
     # Personal Information
     name = models.CharField(max_length=100)
     registration_no = models.CharField(max_length=20, primary_key=True)  # Primary key
@@ -66,6 +78,14 @@ class Participant(models.Model):
 
     # Miscellaneous
     date = models.DateTimeField(auto_now_add=True)
+
+    # New fields
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
+    deactivation_reason = models.TextField(blank=True, null=True)
+    approval_status = models.CharField(max_length=20, choices=APPROVAL_STATUS, default='pending')
+    badges_earned = models.IntegerField(default=0)
+    is_super_mentor = models.BooleanField(default=False)
+    leaderboard_points = models.IntegerField(default=0)
 
     def __str__(self):
         return f'{self.name} ({self.registration_no})'
@@ -141,3 +161,29 @@ class QuizResult(models.Model):
     def __str__(self):
         status_text = f" ({self.status})" if self.status != 'completed' else f" - {self.percentage}%"
         return f"{self.participant.name}'s quiz on {self.quiz_topic}{status_text}"
+
+
+class Badge(models.Model):
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=100)
+    description = models.TextField()
+    points_required = models.IntegerField()
+    image_url = models.URLField(blank=True, null=True)
+    
+    def __str__(self):
+        return self.name
+
+
+class ParticipantBadge(models.Model):
+    id = models.AutoField(primary_key=True)
+    participant = models.ForeignKey(Participant, on_delete=models.CASCADE, related_name='earned_badges')
+    badge = models.ForeignKey(Badge, on_delete=models.CASCADE)
+    earned_date = models.DateTimeField(auto_now_add=True)
+    is_claimed = models.BooleanField(default=False)
+    claimed_date = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        unique_together = ('participant', 'badge')
+    
+    def __str__(self):
+        return f"{self.participant.name} - {self.badge.name}"

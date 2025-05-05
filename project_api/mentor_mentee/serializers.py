@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.core.exceptions import ValidationError
-from .models import Participant, MentorMenteeRelationship, Session, QuizResult
+from .models import Participant, MentorMenteeRelationship, Session, QuizResult, Badge, ParticipantBadge
 
 # Validator for file size
 def validate_file_size(file):
@@ -10,15 +10,35 @@ def validate_file_size(file):
 
 class MentorInfoSerializer(serializers.ModelSerializer):
     """Serializer for basic mentor information"""
+    mentee_count = serializers.SerializerMethodField()
+    
+    def get_mentee_count(self, obj):
+        return MentorMenteeRelationship.objects.filter(mentor=obj).count()
+    
     class Meta:
         model = Participant
-        fields = ('name', 'registration_no', 'semester', 'branch', 'tech_stack')
+        fields = ['name', 'registration_no', 'semester', 'branch', 
+                  'tech_stack', 'areas_of_interest', 'mentee_count',
+                  'badges_earned', 'is_super_mentor', 'leaderboard_points', 'status']
 
 class MenteeInfoSerializer(serializers.ModelSerializer):
     """Serializer for basic mentee information"""
+    mentor = serializers.SerializerMethodField()
+    
+    def get_mentor(self, obj):
+        relationship = MentorMenteeRelationship.objects.filter(mentee=obj).first()
+        if relationship:
+            return {
+                'name': relationship.mentor.name,
+                'registration_no': relationship.mentor.registration_no
+            }
+        return None
+    
     class Meta:
         model = Participant
-        fields = ('name', 'registration_no', 'semester', 'branch', 'tech_stack')
+        fields = ['name', 'registration_no', 'semester', 'branch', 
+                  'tech_stack', 'areas_of_interest', 'mentor',
+                  'badges_earned', 'leaderboard_points', 'status']
 
 class ParticipantSerializer(serializers.ModelSerializer):
     # Add fields for mentor and mentees
@@ -225,3 +245,20 @@ class QuizResultSerializer(serializers.ModelSerializer):
     
     def get_participant_name(self, obj):
         return obj.participant.name if obj.participant else None
+
+class MentorMenteeRelationshipSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MentorMenteeRelationship
+        fields = '__all__'
+
+class BadgeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Badge
+        fields = '__all__'
+
+class ParticipantBadgeSerializer(serializers.ModelSerializer):
+    badge_details = BadgeSerializer(source='badge', read_only=True)
+    
+    class Meta:
+        model = ParticipantBadge
+        fields = ['id', 'participant', 'badge', 'badge_details', 'earned_date', 'is_claimed', 'claimed_date']
