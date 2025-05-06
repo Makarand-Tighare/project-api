@@ -18,7 +18,7 @@ from rest_framework.permissions import IsAuthenticated
 from django.utils.timezone import make_aware
 from datetime import datetime, timedelta
 from django.utils import timezone
-from account.models import Student, Department, DepartmentParticipant
+from account.models import Student, Department, DepartmentParticipant, OTP
 from account.utils import Util
 from dotenv import load_dotenv
 from account.permissions import IsAdminUser, IsDepartmentAdminUser, IsDepartmentAdminForDepartment
@@ -156,12 +156,18 @@ class SendOTPView(APIView):
         serializer = SendOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = serializer.validated_data['email']
-        otp = random.randint(100000, 999999)
-        request.session['otp'] = otp
-        request.session['otp_email'] = email
-        request.session['otp_expires_at'] = timezone.now().strftime('%Y-%m-%d %H:%M:%S')
-        print(f"OTP sent to {email}: {otp}")  # Debug logging
-        body = f'Your OTP Code code is {otp}\n\nOtp is valid for 10 min only'
+        otp_code = random.randint(100000, 999999)
+        
+        # Store OTP in database
+        OTP.objects.filter(email=email, is_used=False).update(is_used=True)  # Mark any existing unused OTPs as used
+        otp_obj = OTP.objects.create(
+            email=email,
+            otp=str(otp_code),
+            expires_at=timezone.now() + timedelta(minutes=10)
+        )
+        
+        print(f"OTP sent to {email}: {otp_code}")  # Debug logging
+        body = f'Your OTP Code code is {otp_code}\n\nOtp is valid for 10 min only'
         data = {
           'subject':'Verify your account',
           'body':body,
@@ -179,31 +185,28 @@ class VerifyOtpView(APIView):
         email = serializer.validated_data['email']
         otp = serializer.validated_data['otp']
 
-        # Retrieve session data
-        session_otp = request.session.get('otp')
-        session_email = request.session.get('otp_email')
-        session_otp_expires_at = request.session.get('otp_expires_at')
-        
-        if not all([session_otp, session_email, session_otp_expires_at]):
-          return Response({'msg': 'OTP not found or session expired'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Parse session_otp_expires_at back to datetime
-        session_otp_expires_at = make_aware(datetime.strptime(session_otp_expires_at, '%Y-%m-%d %H:%M:%S'))
-
-        if email != session_email:
-          return Response({'msg': 'Email mismatch'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        if timezone.now() - timedelta(minutes=10) > session_otp_expires_at:
-            return Response({'msg': 'OTP expired'}, status=status.HTTP_400_BAD_REQUEST)
-        if str(session_otp) == str(otp):
-            try:
-                request.session.flush()  # Clear the session after verification
-                return Response({'msg': 'OTP verified successfully'}, status=status.HTTP_200_OK)
-
-            except Student.DoesNotExist:
-                return Response({'msg': 'Unexpected error occurs please try after some time'}, status=status.HTTP_404_NOT_FOUND)
-        else:
-            return Response({'msg': 'Invalid OTP'}, status=status.HTTP_400_BAD_REQUEST)
+        # Retrieve OTP from database
+        try:
+            otp_obj = OTP.objects.filter(
+                email=email, 
+                otp=otp, 
+                is_used=False
+            ).latest('created_at')
+            
+            # Check if OTP is expired
+            if otp_obj.is_expired:
+                return Response({'msg': 'OTP expired'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Mark OTP as used
+            otp_obj.is_used = True
+            otp_obj.save()
+            
+            return Response({'msg': 'OTP verified successfully'}, status=status.HTTP_200_OK)
+            
+        except OTP.DoesNotExist:
+            return Response({'msg': 'Invalid OTP or OTP already used'}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({'msg': f'Error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
 
 class UserLoginView(APIView):

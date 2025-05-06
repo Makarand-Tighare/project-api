@@ -1,6 +1,8 @@
 from django.db import models
 from django.contrib.auth.models import BaseUserManager,AbstractBaseUser, PermissionsMixin
 from account.choise import *
+from django.utils import timezone
+from datetime import timedelta
 
 # Create your models here.
 
@@ -114,3 +116,23 @@ class DepartmentParticipant(models.Model):
         
     def __str__(self):
         return f"{self.student.email} - {self.department.name}"
+
+class OTP(models.Model):
+    email = models.EmailField()
+    otp = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"OTP for {self.email}"
+    
+    def save(self, *args, **kwargs):
+        # Set expiration time to 10 minutes from now if not already set
+        if not self.expires_at:
+            self.expires_at = timezone.now() + timedelta(minutes=10)
+        super().save(*args, **kwargs)
+
+    @property
+    def is_expired(self):
+        return timezone.now() > self.expires_at
