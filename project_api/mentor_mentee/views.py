@@ -129,15 +129,84 @@ def get_linkedin_user_id(access_token):
     except Exception as e:
         return None, str(e)
 
-# Function to create a post on LinkedIn
+def generate_linkedin_post_content(badge_name, achievement_details):
+    """
+    Generate LinkedIn post content using Gemini API for badge achievements
+    """
+    try:
+        # Gemini API endpoint
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={GEMINI_API_KEY}"
+        
+        # Create prompt for Gemini
+        prompt = f"""Create a professional LinkedIn post announcing the achievement of the {badge_name} badge. 
+        The post should be engaging, highlight the achievement, and be suitable for professional networking.
+        Here are the details of the achievement: {achievement_details}
+        
+        The post should:
+        1. Be professional and engaging
+        2. Include relevant hashtags
+        3. Be between 100-200 words
+        4. Highlight the significance of the achievement
+        5. Be suitable for a professional networking platform
+        
+        Format the response as a single paragraph with hashtags at the end."""
+        
+        # Request body
+        data = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }],
+            "generationConfig": {
+                "temperature": 0.7,
+                "topP": 0.8,
+                "topK": 40
+            }
+        }
+        
+        # Send request to Gemini API
+        headers = {'Content-Type': 'application/json'}
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        
+        # Check response status
+        if response.status_code == 200:
+            # Parse response and extract generated text
+            response_data = response.json()
+            generated_text = response_data['candidates'][0]['content']['parts'][0]['text']
+            return generated_text, None
+        else:
+            return None, f"Gemini API error: {response.status_code}, {response.text}"
+        
+    except Exception as e:
+        return None, str(e)
+
 @api_view(['POST'])
 def linkedin_post(request):
     try:
-        # Extract access token and post content from request body
+        # Extract data from request
         data = request.data
         access_token = data.get('accessToken')
-        content = data.get('content')
-
+        custom_content = data.get('content')  # User-provided content (optional)
+        
+        # Check if user is providing custom content or wants us to generate it
+        if custom_content:
+            content = custom_content
+        else:
+            badge_name = data.get('badgeName')
+            achievement_details = data.get('achievementDetails')
+            
+            if not badge_name or not achievement_details:
+                return Response({
+                    'error': 'Either provide content directly or badge name and achievement details'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Generate content using Gemini
+            content, error = generate_linkedin_post_content(badge_name, achievement_details)
+            if error:
+                return Response({
+                    'error': 'Failed to generate post content',
+                    'details': error
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
         # Fetch user ID dynamically
         user_id, error = get_linkedin_user_id(access_token)
         if error:
@@ -151,12 +220,12 @@ def linkedin_post(request):
 
         # Post body data
         body = {
-            "author": f"urn:li:person:{user_id}",  # Dynamically fetched user ID
+            "author": f"urn:li:person:{user_id}",
             "lifecycleState": "PUBLISHED",
             "specificContent": {
                 "com.linkedin.ugc.ShareContent": {
                     "shareCommentary": {
-                        "text": content,  # Text for your LinkedIn post
+                        "text": content,
                     },
                     "shareMediaCategory": "NONE"
                 }
@@ -178,7 +247,8 @@ def linkedin_post(request):
         if response.status_code in [200, 201]:
             return Response({
                 'message': 'Post created successfully!',
-                'data': response.json()
+                'data': response.json(),
+                'posted_content': content
             }, status=status.HTTP_200_OK)
         else:
             return Response({
@@ -4024,3 +4094,40 @@ def view_proof(request, registration_no, proof_type):
     response = HttpResponse(proof_field, content_type=content_type)
     response['Content-Disposition'] = f'inline; filename="{proof_type}_proof_{registration_no}.{filetype}"'
     return response
+
+@api_view(['POST'])
+def generate_linkedin_preview(request):
+    """
+    Generate and preview LinkedIn post content without posting it
+    """
+    try:
+        # Extract data from request
+        data = request.data
+        badge_name = data.get('badgeName')
+        achievement_details = data.get('achievementDetails')
+        
+        if not badge_name or not achievement_details:
+            return Response({
+                'error': 'Badge name and achievement details are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Generate content using Gemini
+        content, error = generate_linkedin_post_content(badge_name, achievement_details)
+        if error:
+            return Response({
+                'error': 'Failed to generate post content',
+                'details': error
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+        # Return the generated content for preview
+        return Response({
+            'preview_content': content,
+            'badge_name': badge_name,
+            'message': 'Preview content generated successfully. Use the linkedin/post/ endpoint to post to LinkedIn.'
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response({
+            'error': 'An error occurred',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

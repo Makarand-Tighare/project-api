@@ -48,6 +48,7 @@ urlpatterns = [
     
     # LinkedIn integration
     path('linkedin/post/', views.linkedin_post, name='linkedin_post'),
+    path('linkedin/preview/', views.generate_linkedin_preview, name='generate_linkedin_preview'),
     
     # Session management
     path('sessions/create/', views.create_session, name='create_session'),
