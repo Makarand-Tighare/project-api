@@ -135,7 +135,7 @@ def generate_linkedin_post_content(badge_name, achievement_details):
     """
     try:
         # Gemini API endpoint
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={GEMINI_API_KEY}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
         
         # Create prompt for Gemini
         prompt = f"""Create a professional LinkedIn post announcing the achievement of the {badge_name} badge. 
