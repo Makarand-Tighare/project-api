@@ -17,7 +17,7 @@ from google.auth.transport.requests import Request
 # Configure the OAuth2 client
 CLIENT_SECRETS_FILE = os.path.join(settings.BASE_DIR, "client_secret.json")
 SCOPES = ['https://www.googleapis.com/auth/calendar.events']
-REDIRECT_URI = "https://df33-54-166-190-24.ngrok-free.app/api/utility/callback"
+REDIRECT_URI = "http://127.0.0.1:8000/api/utility/callback"
 
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
