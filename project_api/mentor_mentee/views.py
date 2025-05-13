@@ -48,12 +48,29 @@ def get_email_by_registration_no(registration_no):
 @api_view(['POST'])
 def create_participant(request):
     if request.method == 'POST':
+        # Extract file objects before copying request.data
+        files = {}
+        for field_name, field_value in request.data.items():
+            if hasattr(field_value, 'read') and callable(field_value.read):
+                files[field_name] = field_value
+                
+        # Create a mutable copy of request data without file objects
+        data = {}
+        for key, value in request.data.items():
+            if key not in files:
+                data[key] = value
+                
         # Ensure the approval status is set to pending for new participants
-        data = request.data.copy()
         data['approval_status'] = 'pending'  # Force pending status for all new registrations
         
+        # Create serializer with data
         serializer = ParticipantSerializer(data=data)
         if serializer.is_valid():
+            # Add files back to initial_data for the serializer's create method
+            for field_name, file_obj in files.items():
+                serializer.initial_data[field_name] = file_obj
+            
+            # The serializer's create method will handle the file processing
             participant = serializer.save()
             return Response({
                 'msg': 'Details saved successfully',
@@ -2693,35 +2710,35 @@ def calculate_leaderboard_points(request):
             quiz_assignment_score = 0
             
             # Calculate score based on sessions 
-            # Each session is worth 100 points
+            # Each session is worth 20 points (further reduced)
             sessions = Session.objects.filter(mentor=participant).count()
             sessions_as_participant = Session.objects.filter(participants=participant).count()
-            sessions_score = (sessions * 100) + (sessions_as_participant * 50)
+            sessions_score = (sessions * 20) + (sessions_as_participant * 10)  # Further reduced
             
             # Check if participant is a mentor (has mentees)
             mentor_relationships = MentorMenteeRelationship.objects.filter(mentor=participant)
             is_mentor = mentor_relationships.exists()
             
-            # NEW: Points for quizzes assigned by mentor
-            # Each quiz assigned is worth 30 points plus bonus points based on mentee performance
+            # Points for quizzes assigned by mentor
+            # Each quiz assigned is worth 5 points (further reduced)
             assigned_quizzes = QuizResult.objects.filter(mentor=participant)
             assigned_quiz_count = assigned_quizzes.count()
-            quiz_assignment_score = assigned_quiz_count * 30
+            quiz_assignment_score = assigned_quiz_count * 5  # Further reduced
             
             # Add bonus points for completed quizzes with good performance
             completed_assigned_quizzes = assigned_quizzes.filter(status='completed')
             if completed_assigned_quizzes.exists():
                 # Add bonus for each completed quiz based on mentee's performance
+                # Higher mentee score = 2-8 points per quiz (further reduced)
                 for quiz in completed_assigned_quizzes:
-                    # Higher mentee score = more points for mentor (10-30 points per quiz)
-                    performance_bonus = min(30, int(quiz.percentage / 3.33))
+                    performance_bonus = min(8, int(quiz.percentage / 12.5))  # Further reduced bonus
                     quiz_assignment_score += performance_bonus
             
             if is_mentor:
                 # For mentors: Add points for each mentee and their quiz performance
                 mentees = [rel.mentee for rel in mentor_relationships]
                 mentee_count = len(mentees)
-                mentee_score = mentee_count * 200  # Base score for each mentee
+                mentee_score = mentee_count * 40  # Further reduced
                 
                 # Add score for mentee quiz performance
                 for mentee in mentees:
@@ -2735,8 +2752,8 @@ def calculate_leaderboard_points(request):
                         quiz_count = quizzes.count()
                         avg_score = quizzes.aggregate(models.Avg('percentage'))['percentage__avg'] or 0
                         
-                        # Add points for each quiz and bonus for good performance
-                        quiz_score += (quiz_count * 20) + (avg_score * 2)
+                        # Add points for each quiz and bonus for good performance (further reduced)
+                        quiz_score += (quiz_count * 5) + (avg_score * 0.5)  # Further reduced
             else:
                 # For mentees: Calculate scores based on their own quizzes
                 quizzes = QuizResult.objects.filter(
@@ -2748,18 +2765,18 @@ def calculate_leaderboard_points(request):
                     quiz_count = quizzes.count()
                     avg_score = quizzes.aggregate(models.Avg('percentage'))['percentage__avg'] or 0
                     
-                    # Add points for each quiz (50 points each) and bonus for good performance
-                    quiz_score = (quiz_count * 50) + (avg_score * 5)
+                    # Add points for each quiz and bonus for good performance (further reduced)
+                    quiz_score = (quiz_count * 10) + (avg_score * 1)  # Further reduced
             
             # Calculate total score - include quiz assignment points
             total_score = sessions_score + quiz_score + mentee_score + quiz_assignment_score
             
-            # Add bonus for badges and super mentor status
+            # Add bonus for badges and super mentor status (further reduced)
             if participant.badges_earned > 0:
-                total_score += participant.badges_earned * 100
+                total_score += participant.badges_earned * 20  # Further reduced
                 
             if participant.is_super_mentor:
-                total_score += 500  # Super mentor bonus
+                total_score += 100  # Further reduced
             
             # Update participant's leaderboard points
             participant.leaderboard_points = total_score
@@ -2788,7 +2805,7 @@ def calculate_leaderboard_points(request):
                 'sessions_score': sessions_score,
                 'quiz_score': quiz_score,
                 'mentee_score': mentee_score,
-                'quiz_assignment_score': quiz_assignment_score,  # New field for assigned quizzes
+                'quiz_assignment_score': quiz_assignment_score,
                 'total_score': total_score,
                 'badges_earned': participant.badges_earned,
                 'is_super_mentor': participant.is_super_mentor,
