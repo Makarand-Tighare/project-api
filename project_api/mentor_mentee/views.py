@@ -203,6 +203,8 @@ def linkedin_post(request):
         data = request.data
         access_token = data.get('accessToken')
         custom_content = data.get('content')  # User-provided content (optional)
+        participant_id = data.get('participant_id')  # ID of the participant who owns the badge
+        badge_id = data.get('badge_id')  # ID of the badge being shared (optional)
         
         # Check if user is providing custom content or wants us to generate it
         if custom_content:
@@ -262,11 +264,29 @@ def linkedin_post(request):
 
         # Check for successful response
         if response.status_code in [200, 201]:
-            return Response({
+            # If badge_id and participant_id are provided, mark the badge as shared on LinkedIn
+            badge_shared = False
+            if badge_id and participant_id:
+                try:
+                    participant = Participant.objects.get(registration_no=participant_id)
+                    participant_badge = ParticipantBadge.objects.get(participant=participant, badge__id=badge_id)
+                    participant_badge.linkedin_shared = True
+                    participant_badge.save()
+                    badge_shared = True
+                except (Participant.DoesNotExist, ParticipantBadge.DoesNotExist):
+                    # If no badge found, continue without error since the post was still successful
+                    pass
+            
+            response_data = {
                 'message': 'Post created successfully!',
                 'data': response.json(),
                 'posted_content': content
-            }, status=status.HTTP_200_OK)
+            }
+            
+            if badge_shared:
+                response_data['badge_shared'] = True
+                
+            return Response(response_data, status=status.HTTP_200_OK)
         else:
             return Response({
                 'error': 'Failed to create post',
@@ -4122,6 +4142,8 @@ def generate_linkedin_preview(request):
         data = request.data
         badge_name = data.get('badgeName')
         achievement_details = data.get('achievementDetails')
+        participant_id = data.get('participant_id')  # ID of the participant who owns the badge
+        badge_id = data.get('badge_id')  # ID of the badge being shared
         
         if not badge_name or not achievement_details:
             return Response({
@@ -4135,13 +4157,34 @@ def generate_linkedin_preview(request):
                 'error': 'Failed to generate post content',
                 'details': error
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        # Check if the badge is already shared on LinkedIn
+        linkedin_shared = False
+        if participant_id and badge_id:
+            try:
+                participant = Participant.objects.get(registration_no=participant_id)
+                participant_badge = ParticipantBadge.objects.get(participant=participant, badge__id=badge_id)
+                linkedin_shared = participant_badge.linkedin_shared
+            except (Participant.DoesNotExist, ParticipantBadge.DoesNotExist):
+                # If no badge found, continue without error
+                pass
             
-        # Return the generated content for preview
-        return Response({
+        # Return the generated content for preview with badge info
+        response_data = {
             'preview_content': content,
             'badge_name': badge_name,
             'message': 'Preview content generated successfully. Use the linkedin/post/ endpoint to post to LinkedIn.'
-        }, status=status.HTTP_200_OK)
+        }
+        
+        # Include badge and participant IDs if provided
+        if badge_id:
+            response_data['badge_id'] = badge_id
+        if participant_id:
+            response_data['participant_id'] = participant_id
+        if linkedin_shared:
+            response_data['linkedin_shared'] = True
+            
+        return Response(response_data, status=status.HTTP_200_OK)
         
     except Exception as e:
         return Response({

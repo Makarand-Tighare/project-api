@@ -27,9 +27,9 @@ class QuizResultAdmin(admin.ModelAdmin):
     list_filter = ('status', 'completed_date')
 
 class ParticipantBadgeAdmin(admin.ModelAdmin):
-    list_display = ('participant', 'badge', 'earned_date', 'is_claimed', 'claimed_date')
+    list_display = ('participant', 'badge', 'earned_date', 'is_claimed', 'claimed_date', 'linkedin_shared')
     search_fields = ('participant__name', 'badge__name')
-    list_filter = ('is_claimed', 'earned_date', 'claimed_date')
+    list_filter = ('is_claimed', 'earned_date', 'claimed_date', 'linkedin_shared')
 
 class MentorFeedbackAdmin(admin.ModelAdmin):
     list_display = ('mentor', 'mentee', 'overall_rating', 'anonymous', 'created_at')

@@ -209,6 +209,7 @@ class ParticipantBadge(models.Model):
     earned_date = models.DateTimeField(auto_now_add=True)
     is_claimed = models.BooleanField(default=False)
     claimed_date = models.DateTimeField(null=True, blank=True)
+    linkedin_shared = models.BooleanField(default=False)
     
     class Meta:
         unique_together = ('participant', 'badge')
