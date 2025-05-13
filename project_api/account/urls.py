@@ -4,7 +4,8 @@ from account.views import (
     SendPasswordResetEmailView, UserPasswordResetView, VerifyOtpView, SendOTPView,
     UserProfileUpdateView, AdminLoginView, DepartmentListCreateView, DepartmentDetailView,
     DepartmentParticipantsView, AssignDepartmentAdminView, DepartmentAdminsView,
-    AdminDashboardView, DepartmentAdminDashboardView, DepartmentListPublicView
+    AdminDashboardView, DepartmentAdminDashboardView, DepartmentListPublicView,
+    get_public_stats
 )
 from rest_framework_simplejwt.views import TokenRefreshView
 
@@ -35,4 +36,7 @@ urlpatterns = [
     # Department admin management
     path('assign-department-admin/', AssignDepartmentAdminView.as_view(), name='assign-department-admin'),
     path('department-admins/', DepartmentAdminsView.as_view(), name='department-admins'),
+    
+    # Public endpoints
+    path('public-stats/', get_public_stats, name='public-stats'),
 ]

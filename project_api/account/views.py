@@ -23,6 +23,10 @@ from account.utils import Util
 from dotenv import load_dotenv
 from account.permissions import IsAdminUser, IsDepartmentAdminUser, IsDepartmentAdminForDepartment
 from django.db.models import Q
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
+from mentor_mentee.models import MentorMenteeRelationship, Session, Participant
+from django.db.models import Avg
 
 # Load environment variables
 load_dotenv()
@@ -604,3 +608,41 @@ class DepartmentListPublicView(APIView):
     departments = Department.objects.all()
     serializer = DepartmentSerializer(departments, many=True)
     return Response(serializer.data, status=status.HTTP_200_OK)
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def get_public_stats(request):
+    """
+    Public endpoint that provides general site statistics for the homepage
+    without requiring authentication.
+    """
+    try:
+        # Get count of active mentors
+        mentors = MentorMenteeRelationship.objects.values('mentor').distinct().count()
+        
+        # Get count of active students
+        students = Participant.objects.filter(approval_status='approved', status='active').count()
+        
+        # Get count of sessions (all sessions since there's no status field)
+        sessions = Session.objects.count()
+        
+        # Get the overall rating from ApplicationFeedback
+        from mentor_mentee.models import ApplicationFeedback
+        
+        # Get the average of overall_rating from ApplicationFeedback
+        avg_rating_result = ApplicationFeedback.objects.aggregate(Avg('overall_rating'))['overall_rating__avg']
+        
+        # If there are feedback entries, use the actual average, otherwise use 4.8
+        avg_rating = round(avg_rating_result, 1) if avg_rating_result is not None else 4.8
+        
+        # Return public stats data
+        return Response({
+            'active_mentors': mentors,
+            'active_students': students,
+            'sessions_completed': sessions,
+            'average_rating': avg_rating
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
