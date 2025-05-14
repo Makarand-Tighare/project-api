@@ -5,7 +5,7 @@ from account.views import (
     UserProfileUpdateView, AdminLoginView, DepartmentListCreateView, DepartmentDetailView,
     DepartmentParticipantsView, AssignDepartmentAdminView, DepartmentAdminsView,
     AdminDashboardView, DepartmentAdminDashboardView, DepartmentListPublicView,
-    get_public_stats
+    get_public_stats, SendMobileOTPView, VerifyMobileOtpView
 )
 from rest_framework_simplejwt.views import TokenRefreshView
 
@@ -14,6 +14,8 @@ urlpatterns = [
     path('register/', UserRegistrationView.as_view(), name='register'),
     path('verify-otp/', VerifyOtpView.as_view(), name='verify-otp'),
     path('send-otp/', SendOTPView.as_view(), name='send-otp'),
+    path('send-mobile-otp/', SendMobileOTPView.as_view(), name='send-mobile-otp'),
+    path('verify-mobile-otp/', VerifyMobileOtpView.as_view(), name='verify-mobile-otp'),
     path('login/', UserLoginView.as_view(), name='login'),
     path('admin-login/', AdminLoginView.as_view(), name='admin-login'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),

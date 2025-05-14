@@ -45,6 +45,11 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         if password != password2:
             raise serializers.ValidationError("Password and Confirm Password don't match")
             
+        # Check for duplicate registration number
+        reg_no = attrs.get('reg_no')
+        if Student.objects.filter(reg_no=reg_no).exists():
+            raise serializers.ValidationError("Student with this registration number already exists.")
+            
         # Validate department if provided
         department_id = attrs.get('department_id')
         print(f"Validating department_id: {department_id}")
@@ -90,8 +95,28 @@ class SendOTPSerializer(serializers.Serializer):
             raise serializers.ValidationError("Student with this email already exist.")
         return attrs
 
+class SendMobileOTPSerializer(serializers.Serializer):
+    mobile_number = serializers.CharField(max_length=15)
+    
+    def validate(self, attrs):
+        mobile_number = attrs.get('mobile_number')
+        # Check if the mobile number is already registered
+        if Student.objects.filter(mobile_number=mobile_number).exists():
+            raise serializers.ValidationError("Student with this mobile number already exists.")
+        # Validate mobile number format (basic validation)
+        if not mobile_number.startswith('+'):
+            raise serializers.ValidationError("Mobile number must start with country code (e.g., +91)")
+        return attrs
+
 class VerifyOTPSerializer(serializers.Serializer):
     email = serializers.EmailField(max_length=255)
+    otp = serializers.CharField(max_length=6)
+
+    def validate(self, data):
+        return data
+    
+class VerifyMobileOTPSerializer(serializers.Serializer):
+    mobile_number = serializers.CharField(max_length=15)
     otp = serializers.CharField(max_length=6)
 
     def validate(self, data):

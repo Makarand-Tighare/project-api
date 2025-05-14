@@ -236,3 +236,8 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # Gemini AI API key for resume text enhancement
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+
+# Twilio Configuration
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
+TWILIO_VERIFY_SID = os.environ.get('TWILIO_VERIFY_SID')

@@ -9,7 +9,8 @@ from account.serializers import (
     UserRegistrationSerializer, UserLoginSerializer, UserProfileSerializer,
     UserChangePasswordSerializer, SendPasswordResetEmailSerializer,
     UserPasswordResetSerializer, SendOTPSerializer, VerifyOTPSerializer,
-    DepartmentSerializer, DepartmentParticipantSerializer
+    DepartmentSerializer, DepartmentParticipantSerializer, SendMobileOTPSerializer,
+    VerifyMobileOTPSerializer
 )
 from django.contrib.auth import authenticate
 from account.renderers import UserRenderer
@@ -19,7 +20,7 @@ from django.utils.timezone import make_aware
 from datetime import datetime, timedelta
 from django.utils import timezone
 from account.models import Student, Department, DepartmentParticipant, OTP
-from account.utils import Util
+from account.utils import Util, SMSUtil
 from dotenv import load_dotenv
 from account.permissions import IsAdminUser, IsDepartmentAdminUser, IsDepartmentAdminForDepartment
 from django.db.models import Q
@@ -180,6 +181,26 @@ class SendOTPView(APIView):
         Util.send_email(data)
         return Response({"msg": "OTP sent successfully."}, status=status.HTTP_200_OK)
 
+class SendMobileOTPView(APIView):
+    renderer_classes = [UserRenderer]
+    def post(self, request):
+        serializer = SendMobileOTPSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        mobile_number = serializer.validated_data['mobile_number']
+        
+        # Send OTP via Twilio
+        result = SMSUtil.send_otp(mobile_number)
+        
+        if result['success']:
+            return Response({
+                "msg": "OTP sent successfully to your mobile number.",
+                "status": result['status']
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response({
+                "error": "Failed to send OTP.",
+                "details": result['error']
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class VerifyOtpView(APIView):
     renderer_classes = [UserRenderer]
@@ -211,6 +232,29 @@ class VerifyOtpView(APIView):
             return Response({'msg': 'Invalid OTP or OTP already used'}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({'msg': f'Error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class VerifyMobileOtpView(APIView):
+    renderer_classes = [UserRenderer]
+    def post(self, request):
+        serializer = VerifyMobileOTPSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        mobile_number = serializer.validated_data['mobile_number']
+        otp = serializer.validated_data['otp']
+        
+        # Verify OTP via Twilio
+        result = SMSUtil.verify_otp(mobile_number, otp)
+        
+        if result['success'] and result['status'] == 'approved':
+            return Response({
+                'msg': 'Mobile OTP verified successfully',
+                'status': result['status']
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response({
+                'msg': 'Invalid OTP or verification failed',
+                'status': result.get('status', 'failed'),
+                'error': result.get('error', '')
+            }, status=status.HTTP_400_BAD_REQUEST)
     
 
 class UserLoginView(APIView):
