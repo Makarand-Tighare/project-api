@@ -100,9 +100,40 @@ def list_participants(request):
             
         serializer = ParticipantSerializer(participants, many=True)
         
+        # Add mobile numbers from Student model
+        from account.models import Student
+        participant_data = serializer.data
+        
+        # Create a dictionary mapping reg_no to mobile_number from Student model
+        student_mobile_numbers = {}
+        try:
+            # Get all registration numbers
+            reg_nos = [p['registration_no'] for p in participant_data]
+            # Query students with those reg_nos
+            students = Student.objects.filter(reg_no__in=reg_nos)
+            # Create mapping
+            for student in students:
+                student_mobile_numbers[student.reg_no] = student.mobile_number
+        except Exception as e:
+            print(f"Error fetching student mobile numbers: {e}")
+            
+        # Add mobile numbers to participant data
+        for participant in participant_data:
+            reg_no = participant['registration_no']
+            # Try to get from Student model first
+            if reg_no in student_mobile_numbers:
+                participant['mobile_number'] = student_mobile_numbers[reg_no]
+            else:
+                # Fallback to participant model if needed
+                try:
+                    p = Participant.objects.get(registration_no=reg_no)
+                    participant['mobile_number'] = p.mobile_number
+                except:
+                    participant['mobile_number'] = None
+                    
         # Add department info to response
         response_data = {
-            'participants': serializer.data,
+            'participants': participant_data,
             'count': participants.count()
         }
         
