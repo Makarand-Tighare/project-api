@@ -1242,7 +1242,21 @@ def get_participant_profile(request, registration_no):
     try:
         participant = Participant.objects.get(registration_no=registration_no)
         serializer = ParticipantSerializer(participant)
-        return Response(serializer.data)
+        data = serializer.data
+        
+        # Try to fetch mobile_number from Student model using registration_no
+        try:
+            from account.models import Student
+            student = Student.objects.filter(reg_no=registration_no).first()
+            if student:
+                data['mobile_number'] = student.mobile_number
+            else:
+                data['mobile_number'] = participant.mobile_number  # Fallback to participant model if student not found
+        except Exception as e:
+            print(f"Error fetching mobile number: {e}")
+            data['mobile_number'] = participant.mobile_number  # Use participant model as fallback
+            
+        return Response(data)
     except Participant.DoesNotExist:
         return Response({"error": "Participant not found"}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:

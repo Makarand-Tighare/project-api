@@ -102,6 +102,7 @@ class Participant(models.Model):
     badges_earned = models.IntegerField(default=0)
     is_super_mentor = models.BooleanField(default=False)
     leaderboard_points = models.IntegerField(default=0)
+    mobile_number = models.CharField(max_length=13, blank=True, null=True)  # Mobile number of the participant
 
     def __str__(self):
         return f'{self.name} ({self.registration_no})'
