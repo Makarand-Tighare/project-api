@@ -1,9 +1,10 @@
 from django.urls import path
-from projectUtility.views import LinkedInAuthView,IndexView,AuthorizeView,CallbackView,CheckAuthView,CreateMeetView
+from projectUtility.views import LinkedInAuthView,IndexView,AuthorizeView,DirectAuthorizeView,CallbackView,CheckAuthView,CreateMeetView
 
 urlpatterns = [
     path('google-meet-home/', IndexView.as_view(), name='google-meet-home'),
     path('authorize/', AuthorizeView.as_view(), name='authorize'),
+    path('direct-authorize/', DirectAuthorizeView.as_view(), name='direct_authorize'),
     path('callback/', CallbackView.as_view(), name='callback'),
     path('check-auth/', CheckAuthView.as_view(), name='check_auth'),
     path('create-meet', CreateMeetView.as_view(), name='create_meet'),

@@ -115,7 +115,16 @@ class AuthorizeView(APIView):
         )
         request.session['state'] = state
         
-        # Instead of redirecting, return the URL for the frontend to use
+        # Check if this is a direct browser request or an API request
+        is_browser_request = 'text/html' in request.META.get('HTTP_ACCEPT', '')
+        is_api_request = 'application/json' in request.META.get('HTTP_ACCEPT', '')
+        is_xhr = request.META.get('HTTP_X_REQUESTED_WITH') == 'XMLHttpRequest'
+        
+        # If it's a browser request and not an API/XHR request, redirect directly
+        if is_browser_request and not (is_api_request or is_xhr):
+            return HttpResponseRedirect(authorization_url)
+        
+        # For API requests, return JSON response
         return JsonResponse({
             'authorization_url': authorization_url,
             'state': state
@@ -140,6 +149,24 @@ class CheckAuthView(APIView):
             return JsonResponse({'is_authorized': True, 'storage': 'session'})
             
         return JsonResponse({'is_authorized': False})
+
+
+class DirectAuthorizeView(APIView):
+    """
+    View to directly redirect to Google OAuth without returning JSON.
+    This is meant to be used when a direct browser link is needed.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        authorization_url, state = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true'
+        )
+        request.session['state'] = state
+        
+        # Always redirect directly to Google
+        return HttpResponseRedirect(authorization_url)
 
 
 class CallbackView(APIView):
