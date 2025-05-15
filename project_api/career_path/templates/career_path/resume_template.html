@@ -116,8 +116,37 @@
         <!-- Summary Section -->
         {% if resume.basics.summary %}
         <div class="section">
-            <div class="section-title">Summary</div>
+            <div class="section-title">Professional Summary</div>
             <div class="item-description">{{ resume.basics.summary }}</div>
+        </div>
+        {% endif %}
+        
+        <!-- Skills Section -->
+        {% if resume.skills.technical or resume.skills.soft %}
+        <div class="section">
+            <div class="section-title">Skills</div>
+            <div class="skills-container">
+                {% if resume.skills.technical %}
+                <div class="skills-group">
+                    <div class="skills-title">Technical Skills</div>
+                    <div class="skills-list">
+                        {% for skill in resume.skills.technical %}
+                        <div class="skill">{{ skill }}</div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+                {% if resume.skills.soft %}
+                <div class="skills-group">
+                    <div class="skills-title">Soft Skills</div>
+                    <div class="skills-list">
+                        {% for skill in resume.skills.soft %}
+                        <div class="skill">{{ skill }}</div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
         </div>
         {% endif %}
         
@@ -137,9 +166,6 @@
                     <div class="item-subtitle">{{ exp.company }}</div>
                     <div class="item-location">{{ exp.location }}</div>
                 </div>
-                {% if exp.description %}
-                <div class="item-description">{{ exp.description }}</div>
-                {% endif %}
                 {% if exp.bullets %}
                 <ul class="bullets">
                     {% for bullet in exp.bullets %}
@@ -159,7 +185,7 @@
             {% for edu in resume.education %}
             <div class="item">
                 <div class="item-header">
-                    <div class="item-title">{{ edu.degree }}{% if edu.fieldOfStudy %}, {{ edu.fieldOfStudy }}{% endif %}</div>
+                    <div class="item-title">{{ edu.degree }}{% if edu.fieldOfStudy %} in {{ edu.fieldOfStudy }}{% endif %}</div>
                     <div class="item-date">{{ edu.startDate }} - {{ edu.endDate }}</div>
                 </div>
                 <div class="item-header">
@@ -185,48 +211,28 @@
             <div class="item">
                 <div class="item-header">
                     <div class="item-title">{{ project.title }}</div>
-                    <div class="item-date">{{ project.startDate }}{% if project.endDate %} - {{ project.endDate }}{% endif %}</div>
+                    {% if project.startDate or project.endDate %}
+                    <div class="item-date">
+                        {% if project.startDate %}{{ project.startDate }}{% endif %}
+                        {% if project.endDate %} - {{ project.endDate }}{% endif %}
+                    </div>
+                    {% endif %}
                 </div>
                 {% if project.technologies %}
                 <div class="item-subtitle">Technologies: {{ project.technologies }}</div>
                 {% endif %}
-                {% if project.description %}
-                <div class="item-description">{{ project.description }}</div>
+                {% if project.bullets %}
+                <ul class="bullets">
+                    {% for bullet in project.bullets %}
+                    <li class="bullet">{{ bullet }}</li>
+                    {% endfor %}
+                </ul>
                 {% endif %}
                 {% if project.link %}
                 <div>Link: <a href="{{ project.link }}">{{ project.link }}</a></div>
                 {% endif %}
             </div>
             {% endfor %}
-        </div>
-        {% endif %}
-        
-        <!-- Skills Section -->
-        {% if resume.skills %}
-        <div class="section">
-            <div class="section-title">Skills</div>
-            <div class="skills-container">
-                {% if resume.skills.technical %}
-                <div class="skills-group">
-                    <div class="skills-title">Technical Skills</div>
-                    <div class="skills-list">
-                        {% for skill in resume.skills.technical %}
-                        <div class="skill">{{ skill }}</div>
-                        {% endfor %}
-                    </div>
-                </div>
-                {% endif %}
-                {% if resume.skills.soft %}
-                <div class="skills-group">
-                    <div class="skills-title">Soft Skills</div>
-                    <div class="skills-list">
-                        {% for skill in resume.skills.soft %}
-                        <div class="skill">{{ skill }}</div>
-                        {% endfor %}
-                    </div>
-                </div>
-                {% endif %}
-            </div>
         </div>
         {% endif %}
         
@@ -270,4 +276,4 @@
         {% endif %}
     </div>
 </body>
-</html> 
+</html>
