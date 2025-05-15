@@ -57,7 +57,7 @@ class AdminLoginView(APIView):
       print(f"Admin login attempt: {email}")  # Debug logging
       
       # Special case for hardcoded admin credentials
-      if email == "ycce_ct_admin@gmail.com":
+      if email == "ycce_admin@gmail.com":
         # Get or create the admin user to ensure it exists
         try:
           admin_user = Student.objects.get(email=email)
