@@ -16,4 +16,5 @@ urlpatterns = [
     path('resume/', views.get_resume, name='get_resume'),
     path('resume/save/', views.save_resume, name='save_resume'),
     path('resume/enhance-text/', views.enhance_text, name='enhance_text'),
+    path('resume/generate-pdf/', views.generate_pdf, name='generate_pdf'),
 ] 

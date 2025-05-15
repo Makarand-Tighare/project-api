@@ -420,3 +420,29 @@ def enhance_text(request):
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     else:
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def generate_pdf(request):
+    """
+    Generate PDF version of resume
+    """
+    try:
+        resume_data = request.data
+        
+        # Generate PDF file
+        pdf_content = generate_resume_pdf(resume_data, request.user)
+        
+        # Create unique filename
+        filename = f"resume_{request.user.id}_{int(time.time())}.pdf"
+        
+        # Save to model
+        resume_pdf = ResumePDF(user=request.user)
+        resume_pdf.file.save(filename, pdf_content)
+        
+        # Return URL to download the PDF
+        serializer = ResumePDFSerializer(resume_pdf, context={'request': request})
+        return Response(serializer.data)
+        
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
