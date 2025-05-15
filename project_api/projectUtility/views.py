@@ -1,5 +1,6 @@
 import os
 import requests
+import json
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.views import APIView
@@ -13,6 +14,7 @@ from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.permissions import AllowAny
 from google.auth.transport.requests import Request
+from django.views.decorators.http import require_http_methods
 
 # Configure the OAuth2 client
 CLIENT_SECRETS_FILE = os.path.join(settings.BASE_DIR, "client_secret.json")
@@ -112,7 +114,12 @@ class AuthorizeView(APIView):
             include_granted_scopes='true'
         )
         request.session['state'] = state
-        return HttpResponseRedirect(authorization_url)
+        
+        # Instead of redirecting, return the URL for the frontend to use
+        return JsonResponse({
+            'authorization_url': authorization_url,
+            'state': state
+        })
 
 
 class CheckAuthView(APIView):
@@ -250,9 +257,18 @@ class CreateMeetView(APIView):
             credentials_data = request.session.get('credentials')
             credentials = Credentials(**credentials_data)
             
-        # If no credentials found anywhere, redirect to authorization
+        # If no credentials found anywhere, return auth URL instead of redirecting
         if not credentials:
-            return HttpResponseRedirect(reverse('authorize'))
+            authorization_url, state = flow.authorization_url(
+                access_type='offline',
+                include_granted_scopes='true'
+            )
+            request.session['state'] = state
+            return JsonResponse({
+                'authenticated': False,
+                'authorization_url': authorization_url,
+                'state': state
+            })
 
         # Check if credentials are expired and refresh if needed
         if credentials.expired and credentials.refresh_token:
@@ -272,32 +288,38 @@ class CreateMeetView(APIView):
 
         # Create a new Google Meet event
         event = {
-            'summary': 'Test Meeting',
-            'description': 'A test meeting for Google Meet',
+            'summary': request.data.get('summary', 'Meeting'),
+            'description': request.data.get('description', 'Meeting created via API'),
             'start': {
-                'dateTime': '2024-10-15T10:00:00Z',
-                'timeZone': 'UTC',
+                'dateTime': request.data.get('start_time', '2024-10-15T10:00:00Z'),
+                'timeZone': request.data.get('timezone', 'UTC'),
             },
             'end': {
-                'dateTime': '2024-10-15T11:00:00Z',
-                'timeZone': 'UTC',
+                'dateTime': request.data.get('end_time', '2024-10-15T11:00:00Z'),
+                'timeZone': request.data.get('timezone', 'UTC'),
             },
             'conferenceData': {
                 'createRequest': {
                     'conferenceSolutionKey': {'type': 'hangoutsMeet'},
-                    'requestId': 'test123',
+                    'requestId': request.data.get('request_id', 'meeting_request'),
                 },
             },
-            'attendees': [{'email': 'vidyasangam.edu@gmail.com'}],
+            'attendees': request.data.get('attendees', [{'email': 'vidyasangam.edu@gmail.com'}]),
         }
 
         try:
             event = service.events().insert(calendarId='primary', body=event, conferenceDataVersion=1).execute()
             meet_link = event.get('hangoutLink')
-            meeting_id = meet_link.split('/')[-1]  # Extract meeting ID from the link
+            meeting_id = meet_link.split('/')[-1] if meet_link else None
             
-            # Store `meeting_id` as needed for future reference
-
-            return JsonResponse({'meet_link': meet_link, 'meeting_id': meeting_id})
+            return JsonResponse({
+                'authenticated': True,
+                'meet_link': meet_link,
+                'meeting_id': meeting_id,
+                'event_id': event.get('id')
+            })
         except Exception as e:
-            return JsonResponse({'error': 'Failed to create meeting'}, status=500)
+            return JsonResponse({
+                'error': 'Failed to create meeting',
+                'details': str(e)
+            }, status=500)
