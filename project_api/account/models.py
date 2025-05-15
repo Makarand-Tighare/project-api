@@ -78,6 +78,13 @@ class Student(AbstractBaseUser,PermissionsMixin):
   updated_at = models.DateTimeField(auto_now=True)
 
   linkedin_access_token = models.CharField(max_length=1000, blank=True, null=True)
+  
+  # Google OAuth fields
+  google_token = models.CharField(max_length=1000, blank=True, null=True)
+  google_refresh_token = models.CharField(max_length=1000, blank=True, null=True)
+  google_token_uri = models.CharField(max_length=255, blank=True, null=True)
+  google_token_expiry = models.DateTimeField(null=True, blank=True)
+  google_scopes = models.TextField(blank=True, null=True)  # Stored as JSON string
 
   objects = StudentManager()
 

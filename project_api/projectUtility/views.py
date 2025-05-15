@@ -122,8 +122,16 @@ class CheckAuthView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
+        # Check for credentials in the database if user is authenticated
+        if request.user.is_authenticated:
+            user = request.user
+            if user.google_token:
+                return JsonResponse({'is_authorized': True, 'storage': 'database'})
+        
+        # Fall back to checking session
         if 'credentials' in request.session:
-            return JsonResponse({'is_authorized': True})
+            return JsonResponse({'is_authorized': True, 'storage': 'session'})
+            
         return JsonResponse({'is_authorized': False})
 
 
@@ -141,7 +149,27 @@ class CallbackView(APIView):
 
         flow.fetch_token(authorization_response=request.build_absolute_uri())
         credentials = flow.credentials
-        request.session['credentials'] = credentials_to_dict(credentials)
+        
+        # Store the credentials in the database if user is authenticated
+        if request.user.is_authenticated:
+            user = request.user
+            user.google_token = credentials.token
+            user.google_refresh_token = credentials.refresh_token
+            user.google_token_uri = credentials.token_uri
+            
+            # Store expiry time if available
+            if hasattr(credentials, 'expiry'):
+                user.google_token_expiry = credentials.expiry
+            
+            # Store scopes as a comma-separated string
+            if credentials.scopes:
+                user.google_scopes = ','.join(credentials.scopes)
+            
+            user.save()
+        else:
+            # For non-authenticated users, fall back to session storage
+            request.session['credentials'] = credentials_to_dict(credentials)
+            request.session['credentials_temporary'] = True  # Flag to indicate temporary storage
 
         return HttpResponse("""
             <html>
@@ -200,14 +228,45 @@ class CreateMeetView(APIView):
 
     @csrf_exempt
     def post(self, request):
-        credentials_data = request.session.get('credentials')
-        if not credentials_data:
+        credentials = None
+        
+        # First check if user is authenticated to get credentials from database
+        if request.user.is_authenticated:
+            user = request.user
+            # Check if user has Google credentials
+            if user.google_token:
+                # Create credentials object from database values
+                credentials = Credentials(
+                    token=user.google_token,
+                    refresh_token=user.google_refresh_token,
+                    token_uri=user.google_token_uri,
+                    client_id=flow.client_config['client_id'],
+                    client_secret=flow.client_config['client_secret'],
+                    scopes=user.google_scopes.split(',') if user.google_scopes else []
+                )
+        
+        # Fall back to session if not authenticated or no credentials in database
+        if not credentials and 'credentials' in request.session:
+            credentials_data = request.session.get('credentials')
+            credentials = Credentials(**credentials_data)
+            
+        # If no credentials found anywhere, redirect to authorization
+        if not credentials:
             return HttpResponseRedirect(reverse('authorize'))
 
-        credentials = Credentials(**credentials_data)
+        # Check if credentials are expired and refresh if needed
         if credentials.expired and credentials.refresh_token:
             credentials.refresh(Request())
-            request.session['credentials'] = credentials_to_dict(credentials)
+            
+            # Update the refreshed credentials
+            if request.user.is_authenticated and hasattr(request.user, 'google_token'):
+                request.user.google_token = credentials.token
+                if hasattr(credentials, 'expiry'):
+                    request.user.google_token_expiry = credentials.expiry
+                request.user.save()
+            else:
+                # Update session if using session-based auth
+                request.session['credentials'] = credentials_to_dict(credentials)
 
         service = build('calendar', 'v3', credentials=credentials)
 
