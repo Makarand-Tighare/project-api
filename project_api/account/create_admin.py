@@ -3,8 +3,8 @@ from account.models import Student
 def create_admin_user():
     """Create or update admin user with hardcoded credentials"""
     
-    email = "ycce_ct_admin@gmail.com"
-    password = "admin@ctycce"
+    email = "ycce_admin@gmail.com"
+    password = "admin@wholeycce"
     
     # Check if user exists
     if Student.objects.filter(email=email).exists():
