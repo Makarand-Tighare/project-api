@@ -219,9 +219,16 @@ CORS_ALLOWED_ORIGINS = [
     "https://vidyasangam.duckdns.org",
 ]
 
-CORS_ORIGIN_ALLOW_ALL = True
+# Ensure all origins can send credentials
+CORS_ALLOW_ALL_ORIGINS = False  # Set to False to use specific origins
+CORS_ORIGIN_ALLOW_ALL = True  # This should be False if you're using specific origins
 
 CORS_ALLOW_CREDENTIALS = True
+
+# Session settings for Google OAuth
+SESSION_COOKIE_SECURE = True  # For HTTPS
+SESSION_COOKIE_SAMESITE = 'None'  # Required for cross-origin cookies
+SESSION_COOKIE_HTTPONLY = True  # Prevents JavaScript access to cookies
 
 # Add CSRF trusted origins for ngrok
 CSRF_TRUSTED_ORIGINS = [
