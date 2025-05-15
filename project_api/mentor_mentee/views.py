@@ -1465,20 +1465,6 @@ def list_all_relationships(request):
             department_filter = user.department
             print(f"Department admin filtering for department: {department_filter.name}")
             
-            # Check if there are pending approvals for this department
-            pending_approvals_count = Participant.objects.filter(
-                approval_status='pending',
-                department=department_filter
-            ).count()
-            
-            if pending_approvals_count > 0:
-                return Response({
-                    "error": "Approval required before viewing relationships",
-                    "message": f"There are {pending_approvals_count} participants pending approval in your department",
-                    "action_required": "Please approve or reject pending participants first",
-                    "pending_count": pending_approvals_count
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
             # Get relationships where either mentor or mentee is in this department
             department_participants = Participant.objects.filter(
                 department=department_filter,
@@ -1490,17 +1476,6 @@ def list_all_relationships(request):
                 mentor__registration_no__in=participant_ids
             )
         else:
-            # Check if there are pending approvals overall
-            pending_approvals_count = Participant.objects.filter(approval_status='pending').count()
-            
-            if pending_approvals_count > 0:
-                return Response({
-                    "error": "Approval required before viewing relationships",
-                    "message": f"There are {pending_approvals_count} participants pending approval",
-                    "action_required": "Please approve or reject pending participants first",
-                    "pending_count": pending_approvals_count
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
             # Regular admin or non-logged in user gets all relationships
             relationships = MentorMenteeRelationship.objects.all()
             
@@ -1823,37 +1798,12 @@ def list_unmatched_participants(request):
             department_filter = user.department
             print(f"Department admin filtering unmatched participants for department: {department_filter.name}")
             
-            # Check if there are pending approvals for this department
-            pending_approvals_count = Participant.objects.filter(
-                approval_status='pending',
-                department=department_filter
-            ).count()
-            
-            if pending_approvals_count > 0:
-                return Response({
-                    "error": "Approval required before viewing unmatched participants",
-                    "message": f"There are {pending_approvals_count} participants pending approval in your department",
-                    "action_required": "Please approve or reject pending participants first",
-                    "pending_count": pending_approvals_count
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
             # Get all approved participants from this department
             all_participants = Participant.objects.filter(
                 department=department_filter,
                 approval_status='approved'
             )
         else:
-            # Check if there are pending approvals overall
-            pending_approvals_count = Participant.objects.filter(approval_status='pending').count()
-            
-            if pending_approvals_count > 0:
-                return Response({
-                    "error": "Approval required before viewing unmatched participants",
-                    "message": f"There are {pending_approvals_count} participants pending approval",
-                    "action_required": "Please approve or reject pending participants first",
-                    "pending_count": pending_approvals_count
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
             # Regular admin or non-logged in user gets all approved participants
             all_participants = Participant.objects.filter(approval_status='approved')
         
