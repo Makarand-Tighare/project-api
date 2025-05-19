@@ -16,6 +16,7 @@ from django.db import models
 from account.models import Student  # Import Student model for email lookup
 from django.utils import timezone
 from django.http import HttpResponse, Http404
+import base64
 
 load_dotenv()
 
@@ -4193,18 +4194,36 @@ def get_participant_proofs(request, registration_no):
     try:
         participant = Participant.objects.get(registration_no=registration_no)
         
-        # Create a dictionary of proofs
-        proofs = {
-            'research_publications': participant.proof_of_research_publications,
-            'hackathon_participation': participant.proof_of_hackathon_participation,
-            'coding_competitions': participant.proof_of_coding_competitions,
-            'academic_performance': participant.proof_of_academic_performance,
-            'internships': participant.proof_of_internships,
-            'extracurricular_activities': participant.proof_of_extracurricular_activities
-        }
+        # Create a dictionary of proofs with base64 encoding
+        proofs = {}
         
-        # Filter out None values
-        proofs = {k: v for k, v in proofs.items() if v is not None}
+        # Helper function to encode binary data
+        def encode_proof(binary_data):
+            if binary_data:
+                try:
+                    return base64.b64encode(binary_data).decode('utf-8')
+                except:
+                    return None
+            return None
+        
+        # Add each proof with proper encoding
+        if participant.proof_of_research_publications:
+            proofs['research_publications'] = encode_proof(participant.proof_of_research_publications)
+            
+        if participant.proof_of_hackathon_participation:
+            proofs['hackathon_participation'] = encode_proof(participant.proof_of_hackathon_participation)
+            
+        if participant.proof_of_coding_competitions:
+            proofs['coding_competitions'] = encode_proof(participant.proof_of_coding_competitions)
+            
+        if participant.proof_of_academic_performance:
+            proofs['academic_performance'] = encode_proof(participant.proof_of_academic_performance)
+            
+        if participant.proof_of_internships:
+            proofs['internships'] = encode_proof(participant.proof_of_internships)
+            
+        if participant.proof_of_extracurricular_activities:
+            proofs['extracurricular_activities'] = encode_proof(participant.proof_of_extracurricular_activities)
         
         if not proofs:
             return Response({
