@@ -2748,14 +2748,12 @@ def calculate_leaderboard_points(request):
             assigned_quiz_count = assigned_quizzes.count()
             quiz_assignment_score = assigned_quiz_count * 5  # Further reduced
             
-            # Add bonus points for completed quizzes with good performance
+            # Add points for completed quizzes with direct score
             completed_assigned_quizzes = assigned_quizzes.filter(status='completed')
             if completed_assigned_quizzes.exists():
-                # Add bonus for each completed quiz based on mentee's performance
-                # Higher mentee score = 2-8 points per quiz (further reduced)
+                # Add points based on direct score (e.g., 4/5 = 4 points)
                 for quiz in completed_assigned_quizzes:
-                    performance_bonus = min(8, int(quiz.percentage / 12.5))  # Further reduced bonus
-                    quiz_assignment_score += performance_bonus
+                    quiz_assignment_score += quiz.score
             
             if is_mentor:
                 # For mentors: Add points for each mentee and their quiz performance
@@ -2772,11 +2770,9 @@ def calculate_leaderboard_points(request):
                     )
                     
                     if quizzes.exists():
-                        quiz_count = quizzes.count()
-                        avg_score = quizzes.aggregate(models.Avg('percentage'))['percentage__avg'] or 0
-                        
-                        # Add points for each quiz and bonus for good performance (further reduced)
-                        quiz_score += (quiz_count * 5) + (avg_score * 0.5)  # Further reduced
+                        # Add direct score from each quiz (e.g., 4/5 = 4 points)
+                        for quiz in quizzes:
+                            quiz_score += quiz.score
             else:
                 # For mentees: Calculate scores based on their own quizzes
                 quizzes = QuizResult.objects.filter(
@@ -2785,11 +2781,9 @@ def calculate_leaderboard_points(request):
                 )
                 
                 if quizzes.exists():
-                    quiz_count = quizzes.count()
-                    avg_score = quizzes.aggregate(models.Avg('percentage'))['percentage__avg'] or 0
-                    
-                    # Add points for each quiz and bonus for good performance (further reduced)
-                    quiz_score = (quiz_count * 10) + (avg_score * 1)  # Further reduced
+                    # Add direct score from each quiz (e.g., 4/5 = 4 points)
+                    for quiz in quizzes:
+                        quiz_score += quiz.score
             
             # Calculate total score - include quiz assignment points
             total_score = sessions_score + quiz_score + mentee_score + quiz_assignment_score
