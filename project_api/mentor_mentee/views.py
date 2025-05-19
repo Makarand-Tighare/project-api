@@ -4,7 +4,7 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from .models import Participant, MentorMenteeRelationship, Session, QuizResult, Badge, ParticipantBadge, Department, FeedbackSettings, MentorFeedback, ApplicationFeedback
-from .serializers import ParticipantSerializer, SessionSerializer, MentorInfoSerializer, MenteeInfoSerializer, QuizResultSerializer, BadgeSerializer, ParticipantBadgeSerializer, FeedbackSettingsSerializer, MentorFeedbackSerializer, ApplicationFeedbackSerializer, ProfileSerializer
+from .serializers import ParticipantSerializer, SessionSerializer, MentorInfoSerializer, MenteeInfoSerializer, QuizResultSerializer, BadgeSerializer, ParticipantBadgeSerializer, FeedbackSettingsSerializer, MentorFeedbackSerializer, ApplicationFeedbackSerializer, ProfileSerializer, ParticipantListSerializer
 from collections import defaultdict
 from itertools import cycle
 from django.db import transaction
@@ -99,7 +99,7 @@ def list_participants(request):
             # Regular admin or non-logged in user gets all participants
             participants = Participant.objects.all()
             
-        serializer = ParticipantSerializer(participants, many=True)
+        serializer = ParticipantListSerializer(participants, many=True)
         
         # Add mobile numbers from Student model
         from account.models import Student
