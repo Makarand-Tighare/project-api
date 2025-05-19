@@ -15,7 +15,7 @@ from account.serializers import (
 from django.contrib.auth import authenticate
 from account.renderers import UserRenderer
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.utils.timezone import make_aware
 from datetime import datetime, timedelta
 from django.utils import timezone
@@ -25,9 +25,10 @@ from dotenv import load_dotenv
 from account.permissions import IsAdminUser, IsDepartmentAdminUser, IsDepartmentAdminForDepartment
 from django.db.models import Q
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
 from mentor_mentee.models import MentorMenteeRelationship, Session, Participant
 from django.db.models import Avg
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
 # Load environment variables
 load_dotenv()
@@ -690,3 +691,58 @@ def get_public_stats(request):
         return Response({
             'error': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class TokenVerifyView(APIView):
+    """
+    View to verify if a token is valid and return the user information.
+    """
+    renderer_classes = [UserRenderer]
+    permission_classes = [AllowAny]
+    
+    def post(self, request, format=None):
+        auth_header = request.data.get('token')
+        if not auth_header:
+            return Response({
+                'error': 'Token not provided',
+                'is_valid': False
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        jwt_auth = JWTAuthentication()
+        
+        try:
+            # Attempt to validate the token
+            if auth_header.startswith('Bearer '):
+                raw_token = auth_header[7:]  # Remove 'Bearer ' prefix
+            else:
+                raw_token = auth_header
+                
+            validated_token = jwt_auth.get_validated_token(raw_token)
+            user = jwt_auth.get_user(validated_token)
+            
+            # Token is valid, return user information
+            response_data = {
+                'is_valid': True,
+                'user_id': user.id,
+                'email': user.email,
+                'is_admin': user.is_admin,
+                'is_department_admin': user.is_department_admin,
+            }
+            
+            if user.department:
+                response_data['department'] = {
+                    'id': user.department.id,
+                    'name': user.department.name
+                }
+                
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except (InvalidToken, TokenError) as e:
+            return Response({
+                'error': str(e),
+                'is_valid': False
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        except Exception as e:
+            return Response({
+                'error': f'Unexpected error: {str(e)}',
+                'is_valid': False
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
