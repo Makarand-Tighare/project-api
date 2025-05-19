@@ -2168,7 +2168,9 @@ def submit_quiz_answers(request):
         quiz_result.save()
     
     serializer = QuizResultSerializer(quiz_result)
-    return Response(serializer.data, status=201)
+    response_data = serializer.data
+    response_data['marks_display'] = f"{score}/{total_questions}"
+    return Response(response_data, status=201)
 
 @api_view(['GET'])
 def get_participant_quiz_results(request, registration_no):
@@ -2177,7 +2179,10 @@ def get_participant_quiz_results(request, registration_no):
         participant = Participant.objects.get(registration_no=registration_no)
         quiz_results = QuizResult.objects.filter(participant=participant)
         serializer = QuizResultSerializer(quiz_results, many=True)
-        return Response(serializer.data)
+        response_data = serializer.data
+        for result in response_data:
+            result['marks_display'] = f"{result['score']}/{result['total_questions']}"
+        return Response(response_data)
     except Participant.DoesNotExist:
         return Response({'error': f'Participant with ID {registration_no} not found'}, status=404)
     except Exception as e:
@@ -2189,7 +2194,9 @@ def get_quiz_result_details(request, result_id):
     try:
         quiz_result = QuizResult.objects.get(id=result_id)
         serializer = QuizResultSerializer(quiz_result)
-        return Response(serializer.data)
+        response_data = serializer.data
+        response_data['marks_display'] = f"{quiz_result.score}/{quiz_result.total_questions}"
+        return Response(response_data)
     except QuizResult.DoesNotExist:
         return Response({'error': f'Quiz result with ID {result_id} not found'}, status=404)
     except Exception as e:
