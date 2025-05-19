@@ -4,7 +4,7 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from .models import Participant, MentorMenteeRelationship, Session, QuizResult, Badge, ParticipantBadge, Department, FeedbackSettings, MentorFeedback, ApplicationFeedback
-from .serializers import ParticipantSerializer, SessionSerializer, MentorInfoSerializer, MenteeInfoSerializer, QuizResultSerializer, BadgeSerializer, ParticipantBadgeSerializer, FeedbackSettingsSerializer, MentorFeedbackSerializer, ApplicationFeedbackSerializer
+from .serializers import ParticipantSerializer, SessionSerializer, MentorInfoSerializer, MenteeInfoSerializer, QuizResultSerializer, BadgeSerializer, ParticipantBadgeSerializer, FeedbackSettingsSerializer, MentorFeedbackSerializer, ApplicationFeedbackSerializer, ProfileSerializer
 from collections import defaultdict
 from itertools import cycle
 from django.db import transaction
@@ -1272,7 +1272,7 @@ def get_participant_profile(request, registration_no):
     """Get a participant's profile with mentor/mentee relationships."""
     try:
         participant = Participant.objects.get(registration_no=registration_no)
-        serializer = ParticipantSerializer(participant)
+        serializer = ProfileSerializer(participant)
         data = serializer.data
         
         # Try to fetch mobile_number from Student model using registration_no
@@ -4185,4 +4185,40 @@ def generate_linkedin_preview(request):
         return Response({
             'error': 'An error occurred',
             'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+def get_participant_proofs(request, registration_no):
+    """Get a participant's proof documents."""
+    try:
+        participant = Participant.objects.get(registration_no=registration_no)
+        
+        # Create a dictionary of proofs
+        proofs = {
+            'research_publications': participant.proof_of_research_publications,
+            'hackathon_participation': participant.proof_of_hackathon_participation,
+            'coding_competitions': participant.proof_of_coding_competitions,
+            'academic_performance': participant.proof_of_academic_performance,
+            'internships': participant.proof_of_internships,
+            'extracurricular_activities': participant.proof_of_extracurricular_activities
+        }
+        
+        # Filter out None values
+        proofs = {k: v for k, v in proofs.items() if v is not None}
+        
+        if not proofs:
+            return Response({
+                "message": "No proofs found for this participant"
+            }, status=status.HTTP_404_NOT_FOUND)
+            
+        return Response(proofs)
+        
+    except Participant.DoesNotExist:
+        return Response({
+            "error": "Participant not found"
+        }, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({
+            "error": "Failed to fetch proofs",
+            "details": str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

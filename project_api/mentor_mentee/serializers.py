@@ -348,3 +348,53 @@ class FeedbackSettingsSerializer(serializers.ModelSerializer):
         
     def get_department_name(self, obj):
         return obj.department.name if obj.department else "Global Settings"
+
+class ProfileSerializer(serializers.ModelSerializer):
+    """Serializer for participant profile data, excluding binary proof fields"""
+    mentor = serializers.SerializerMethodField()
+    mentees = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()
+    department_details = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Participant
+        exclude = [
+            'proof_of_research_publications',
+            'proof_of_hackathon_participation',
+            'proof_of_coding_competitions',
+            'proof_of_academic_performance',
+            'proof_of_internships',
+            'proof_of_extracurricular_activities'
+        ]
+
+    def get_mentor(self, obj):
+        """Get the mentor for this participant (if they are a mentee)"""
+        try:
+            relationship = MentorMenteeRelationship.objects.filter(mentee=obj).first()
+            if relationship:
+                return MentorInfoSerializer(relationship.mentor).data
+            return None
+        except Exception:
+            return None
+    
+    def get_mentees(self, obj):
+        """Get the mentees for this participant (if they are a mentor)"""
+        try:
+            relationships = MentorMenteeRelationship.objects.filter(mentor=obj)
+            if relationships:
+                return MenteeInfoSerializer([rel.mentee for rel in relationships], many=True).data
+            return []
+        except Exception:
+            return []
+            
+    def get_department_name(self, obj):
+        return obj.department.name if obj.department else None
+        
+    def get_department_details(self, obj):
+        if obj.department:
+            return {
+                'id': obj.department.id,
+                'name': obj.department.name,
+                'code': obj.department.code
+            }
+        return None

@@ -3,7 +3,9 @@ from . import views
 from .views import view_proof
 
 urlpatterns = [
-
+    # Add the new proofs endpoint
+    path('participants/proofs/<str:registration_no>/', views.get_participant_proofs, name='get_participant_proofs'),
+    
     path('participant/<str:registration_no>/proof/<str:proof_type>/', view_proof, name='view_proof'),
     # Existing participant endpoints
     path('participants/create/', views.create_participant, name='create_participant'),
