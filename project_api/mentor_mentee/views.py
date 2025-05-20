@@ -1992,20 +1992,20 @@ def generate_quiz(request):
             )
             pending_quiz.save()
             
-            # # Send email notification to the mentee
-            # from account.utils import Util
+            # Send email notification to the mentee
+            from account.utils import Util
             
-            # # Get the mentee's email
-            # email = get_email_by_registration_no(mentee.registration_no)
+            # Get the mentee's email
+            email = get_email_by_registration_no(mentee.registration_no)
             
-            # # Send quiz assignment email
-            # body = f"Dear {mentee.name},\n\nA new quiz on '{prompt}' has been assigned to you by your mentor {mentor.name}. Please login to the platform to attempt the quiz.\n\nRegards,\nThe Team VidyaSangam"
-            # data = {
-            #     'subject': 'New Quiz Assigned',
-            #     'body': body,
-            #     'to_email': email
-            # }
-            # Util.send_email(data)
+            # Send quiz assignment email
+            body = f"Dear {mentee.name},\n\nA new quiz on '{prompt}' has been assigned to you by your mentor {mentor.name}. Please login to the platform to attempt the quiz.\n\nRegards,\nThe Team VidyaSangam"
+            data = {
+                'subject': 'New Quiz Assigned',
+                'body': body,
+                'to_email': email
+            }
+            Util.send_email(data)
             
             # Include the quiz_id in the response
             return Response({
