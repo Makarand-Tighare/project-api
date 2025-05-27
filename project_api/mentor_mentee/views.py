@@ -1544,13 +1544,11 @@ def create_relationship(request):
         
         if hasattr(user, 'is_department_admin') and user.is_department_admin and user.department:
             department_filter = user.department
-            
             # Check if there are pending approvals for this department
             pending_approvals_count = Participant.objects.filter(
                 approval_status='pending',
                 department=department_filter
             ).count()
-            
             if pending_approvals_count > 0:
                 return Response({
                     "error": "Approval required before creating relationships",
@@ -1559,17 +1557,34 @@ def create_relationship(request):
                     "pending_count": pending_approvals_count
                 }, status=status.HTTP_400_BAD_REQUEST)
         else:
-            # Check if there are pending approvals overall
-            pending_approvals_count = Participant.objects.filter(approval_status='pending').count()
-            
+            # Check if there are pending approvals in the departments of the mentor or mentee
+            mentor = Participant.objects.filter(registration_no=mentor_reg_no).first()
+            mentee = Participant.objects.filter(registration_no=mentee_reg_no).first()
+            mentor_dept = mentor.department if mentor else None
+            mentee_dept = mentee.department if mentee else None
+
+            pending_approvals_count = 0
+            pending_departments = []
+
+            if mentor_dept:
+                count = Participant.objects.filter(approval_status='pending', department=mentor_dept).count()
+                if count > 0:
+                    pending_approvals_count += count
+                    pending_departments.append(mentor_dept.name)
+            if mentee_dept and mentee_dept != mentor_dept:
+                count = Participant.objects.filter(approval_status='pending', department=mentee_dept).count()
+                if count > 0:
+                    pending_approvals_count += count
+                    pending_departments.append(mentee_dept.name)
+
             if pending_approvals_count > 0:
                 return Response({
                     "error": "Approval required before creating relationships",
-                    "message": f"There are {pending_approvals_count} participants pending approval",
+                    "message": f"There are {pending_approvals_count} participants pending approval in the following department(s): {', '.join(pending_departments)}",
                     "action_required": "Please approve or reject pending participants first",
                     "pending_count": pending_approvals_count
                 }, status=status.HTTP_400_BAD_REQUEST)
-            
+        
         # Verify both participants exist
         try:
             mentor = Participant.objects.get(registration_no=mentor_reg_no)
