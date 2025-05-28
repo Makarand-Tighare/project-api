@@ -445,88 +445,123 @@ def has_common_interests(mentor, mentee):
     """
     Check if mentor and mentee share common tech stack or areas of interest.
     Takes into account interest priorities of both mentor and mentee.
+    Returns tuple of (common_tech, common_interests, preference_score)
     """
     # Handle possible nan or empty values
-    mentor_tech = mentor['tech_stack'] if 'tech_stack' in mentor and mentor['tech_stack'] and mentor['tech_stack'] != 'nan' else ''
-    mentee_tech = mentee['tech_stack'] if 'tech_stack' in mentee and mentee['tech_stack'] and mentee['tech_stack'] != 'nan' else ''
-    mentor_interest = mentor['areas_of_interest'] if 'areas_of_interest' in mentor and mentor['areas_of_interest'] and mentor['areas_of_interest'] != 'nan' else ''
-    mentee_interest = mentee['areas_of_interest'] if 'areas_of_interest' in mentee and mentee['areas_of_interest'] and mentee['areas_of_interest'] != 'nan' else ''
+    mentor_tech = mentor.get('tech_stack', '').split(',') if mentor.get('tech_stack') else []
+    mentee_tech = mentee.get('tech_stack', '').split(',') if mentee.get('tech_stack') else []
+    mentor_interest = mentor.get('areas_of_interest', '').split(',') if mentor.get('areas_of_interest') else []
+    mentee_interest = mentee.get('areas_of_interest', '').split(',') if mentee.get('areas_of_interest') else []
+    
+    # Clean up the lists - strip whitespace and remove empty strings
+    mentor_tech = [tech.strip() for tech in mentor_tech if tech.strip()]
+    mentee_tech = [tech.strip() for tech in mentee_tech if tech.strip()]
+    mentor_interests = [interest.strip() for interest in mentor_interest if interest.strip()]
+    mentee_interests = [interest.strip() for interest in mentee_interest if interest.strip()]
     
     # Get prioritized interests
-    mentor_pref1 = mentor.get('interest_preference1', '')
-    mentor_pref2 = mentor.get('interest_preference2', '')
-    mentor_pref3 = mentor.get('interest_preference3', '')
-    mentee_pref1 = mentee.get('interest_preference1', '')
-    mentee_pref2 = mentee.get('interest_preference2', '')
-    mentee_pref3 = mentee.get('interest_preference3', '')
+    mentor_pref1 = mentor.get('interest_preference1', '').strip()
+    mentor_pref2 = mentor.get('interest_preference2', '').strip()
+    mentor_pref3 = mentor.get('interest_preference3', '').strip()
+    mentee_pref1 = mentee.get('interest_preference1', '').strip()
+    mentee_pref2 = mentee.get('interest_preference2', '').strip()
+    mentee_pref3 = mentee.get('interest_preference3', '').strip()
     
-    # Split by comma and clean up spaces
-    mentor_tech_stack = set(tech.strip() for tech in mentor_tech.split(',')) if mentor_tech else set()
-    mentee_tech_stack = set(tech.strip() for tech in mentee_tech.split(',')) if mentee_tech else set()
-    mentor_interests = set(interest.strip() for interest in mentor_interest.split(',')) if mentor_interest else set()
-    mentee_interests = set(interest.strip() for interest in mentee_interest.split(',')) if mentee_interest else set()
+    # Find common tech stack and interests
+    common_tech = []
+    for m_tech in mentor_tech:
+        for s_tech in mentee_tech:
+            if m_tech.lower() in s_tech.lower() or s_tech.lower() in m_tech.lower():
+                common_tech.append((m_tech, s_tech))
     
-    # Check for common interests
-    common_tech = mentor_tech_stack.intersection(mentee_tech_stack)
-    common_interests = mentor_interests.intersection(mentee_interests)
-    
-    # Check for partial matches in tech stack (e.g., "JavaScript" in "JavaScript, Node.js")
-    if not common_tech:
-        partial_matches = set()
-        for m_tech in mentor_tech_stack:
-            for s_tech in mentee_tech_stack:
-                if m_tech in s_tech or s_tech in m_tech:
-                    partial_matches.add((m_tech, s_tech))
-        common_tech = partial_matches
-    
-    # Same for interests
-    if not common_interests:
-        partial_matches = set()
-        for m_int in mentor_interests:
-            for s_int in mentee_interests:
-                if m_int in s_int or s_int in m_int:
-                    partial_matches.add((m_int, s_int))
-        common_interests = partial_matches
+    common_interests = []
+    for m_int in mentor_interests:
+        for s_int in mentee_interests:
+            if m_int.lower() in s_int.lower() or s_int.lower() in m_int.lower():
+                common_interests.append((m_int, s_int))
     
     # Calculate preference match score (higher is better)
     preference_score = 0
     
     # Check if mentor's preferences match mentee's interests/tech
-    if mentor_pref1 and (mentor_pref1 in mentee_interests or any(mentor_pref1 in tech for tech in mentee_tech_stack)):
-        preference_score += 10  # Highest priority match
-    if mentor_pref2 and (mentor_pref2 in mentee_interests or any(mentor_pref2 in tech for tech in mentee_tech_stack)):
-        preference_score += 6   # Medium priority match
-    if mentor_pref3 and (mentor_pref3 in mentee_interests or any(mentor_pref3 in tech for tech in mentee_tech_stack)):
-        preference_score += 3   # Lower priority match
+    if mentor_pref1:
+        if any(mentor_pref1.lower() in interest.lower() for interest in mentee_interests) or \
+           any(mentor_pref1.lower() in tech.lower() for tech in mentee_tech):
+            preference_score += 10  # Highest priority match
+    if mentor_pref2:
+        if any(mentor_pref2.lower() in interest.lower() for interest in mentee_interests) or \
+           any(mentor_pref2.lower() in tech.lower() for tech in mentee_tech):
+            preference_score += 6   # Medium priority match
+    if mentor_pref3:
+        if any(mentor_pref3.lower() in interest.lower() for interest in mentee_interests) or \
+           any(mentor_pref3.lower() in tech.lower() for tech in mentee_tech):
+            preference_score += 3   # Lower priority match
     
     # Check if mentee's preferences match mentor's interests/tech
-    if mentee_pref1 and (mentee_pref1 in mentor_interests or any(mentee_pref1 in tech for tech in mentor_tech_stack)):
-        preference_score += 10  # Highest priority match
-    if mentee_pref2 and (mentee_pref2 in mentor_interests or any(mentee_pref2 in tech for tech in mentor_tech_stack)):
-        preference_score += 6   # Medium priority match
-    if mentee_pref3 and (mentee_pref3 in mentor_interests or any(mentee_pref3 in tech for tech in mentor_tech_stack)):
-        preference_score += 3   # Lower priority match
+    if mentee_pref1:
+        if any(mentee_pref1.lower() in interest.lower() for interest in mentor_interests) or \
+           any(mentee_pref1.lower() in tech.lower() for tech in mentor_tech):
+            preference_score += 10  # Highest priority match
+    if mentee_pref2:
+        if any(mentee_pref2.lower() in interest.lower() for interest in mentor_interests) or \
+           any(mentee_pref2.lower() in tech.lower() for tech in mentor_tech):
+            preference_score += 6   # Medium priority match
+    if mentee_pref3:
+        if any(mentee_pref3.lower() in interest.lower() for interest in mentor_interests) or \
+           any(mentee_pref3.lower() in tech.lower() for tech in mentor_tech):
+            preference_score += 3   # Lower priority match
     
-    # NEW: Consider badge count and super mentor status
-    badge_bonus = 0
-    if 'badges_earned' in mentor and mentor['badges_earned']:
+    return common_tech, common_interests, preference_score
+
+def calculate_match_quality(mentor, mentee):
+    """Calculate the match quality score between a mentor and mentee"""
+    quality_score = 0
+    
+    # Consider mentor's historical performance
+    if mentor.get('historical_data'):
+        mentor_history = mentor['historical_data']
+        if mentor_history['was_mentor'] and mentor_history['mentor_rating']:
+            quality_score += min(mentor_history['mentor_rating'] / 2, 2)  # Max 2 points for good rating
+        if mentor_history['sessions_conducted'] > 0:
+            quality_score += min(mentor_history['sessions_conducted'] / 5, 1)  # Max 1 point for session experience
+    
+    # Consider mentee's historical performance
+    if mentee.get('historical_data'):
+        mentee_history = mentee['historical_data']
+        if mentee_history['was_mentee'] and mentee_history['mentee_rating']:
+            quality_score += min(mentee_history['mentee_rating'] / 2, 2)  # Max 2 points for good rating
+        if mentee_history['sessions_attended'] > 0:
+            quality_score += min(mentee_history['sessions_attended'] / 5, 1)  # Max 1 point for session attendance
+    
+    # Consider badges and super mentor status
+    if mentor.get('badges_earned'):
         badge_count = int(mentor['badges_earned'])
-        # Scale the badge bonus from 0-10 based on badge count
-        badge_bonus = min(10, badge_count * 2)
+        quality_score += min(badge_count * 0.5, 2)  # Max 2 points for badges
     
-    # Super mentors get higher compatibility scores
-    super_mentor_bonus = 0
-    if 'is_super_mentor' in mentor and mentor['is_super_mentor']:
-        super_mentor_bonus = 10  # Significant boost for super mentors
+    if mentor.get('is_super_mentor'):
+        quality_score += 2  # Bonus points for super mentors
     
-    # Combine all findings with new badge and super mentor bonuses
-    return common_tech, common_interests, preference_score, badge_bonus, super_mentor_bonus
+    return quality_score
 
 def match_mentors_mentees(students):
     """Match mentors and mentees based on various criteria"""
     # Separate mentors and mentees
     mentors = [s for s in students if s['mentoring_preferences'] == 'mentor']
     mentees = [s for s in students if s['mentoring_preferences'] == 'mentee']
+    
+    # If no mentors or mentees, return empty matches
+    if not mentors or not mentees:
+        return {
+            "matches": [],
+            "unmatched_mentees": mentees,
+            "unmatched_mentors": mentors,
+            "statistics": {
+                "total_participants": len(students),
+                "total_mentors": len(mentors),
+                "total_mentees": len(mentees),
+                "matches_made": 0
+            }
+        }
     
     # Get historical data for all participants
     registration_nos = [s['registration_no'] for s in students]
@@ -556,42 +591,99 @@ def match_mentors_mentees(students):
         else:
             student['historical_data'] = None
     
-    # Rest of the matching logic...
-    # When calculating match quality, consider historical data:
-    # - Previous mentor rating
-    # - Previous mentee rating
-    # - Quiz performance
-    # - Session participation
-    # - Badges earned
+    # Dictionary to track how many mentees each mentor has
+    mentor_mentee_count = {mentor['registration_no']: 0 for mentor in mentors}
+    MAX_MENTEES_PER_MENTOR = 4
     
-    # Example of how to use historical data in matching:
-    def calculate_match_quality(mentor, mentee):
-        quality_score = 0
-        
-        # Base score from common interests
-        if has_common_interests(mentor, mentee):
-            quality_score += 2
-        
-        # Consider mentor's historical performance
-        if mentor.get('historical_data'):
-            mentor_history = mentor['historical_data']
-            if mentor_history['was_mentor'] and mentor_history['mentor_rating']:
-                quality_score += min(mentor_history['mentor_rating'] / 2, 2)  # Max 2 points for good rating
-            if mentor_history['sessions_conducted'] > 0:
-                quality_score += min(mentor_history['sessions_conducted'] / 5, 1)  # Max 1 point for session experience
-        
-        # Consider mentee's historical performance
-        if mentee.get('historical_data'):
-            mentee_history = mentee['historical_data']
-            if mentee_history['was_mentee'] and mentee_history['mentee_rating']:
-                quality_score += min(mentee_history['mentee_rating'] / 2, 2)  # Max 2 points for good rating
-            if mentee_history['sessions_attended'] > 0:
-                quality_score += min(mentee_history['sessions_attended'] / 5, 1)  # Max 1 point for session attendance
-        
-        return quality_score
+    # List to store all matches
+    matches = []
+    unmatched_mentees = []
     
-    # Use the enhanced match quality calculation in your matching algorithm
-    # ... rest of the matching logic ...
+    # For each mentee, find the best matching mentor
+    for mentee in mentees:
+        best_match = None
+        best_score = -1
+        best_common_tech = []
+        best_common_interests = []
+        best_preference_score = 0
+        
+        for mentor in mentors:
+            # Skip if mentor already has max mentees
+            if mentor_mentee_count[mentor['registration_no']] >= MAX_MENTEES_PER_MENTOR:
+                continue
+                
+            # Skip if mentor and mentee are the same person
+            if mentor['registration_no'] == mentee['registration_no']:
+                continue
+                
+            # Check if they have common interests and calculate match quality
+            common_tech, common_interests, preference_score = has_common_interests(mentor, mentee)
+            
+            # Calculate overall match quality
+            match_quality = calculate_match_quality(mentor, mentee)
+            
+            # Add bonus for common interests
+            if common_tech or common_interests:
+                match_quality += len(common_tech) + len(common_interests)
+            
+            # Add preference score
+            match_quality += preference_score
+            
+            # If this is the best match so far, store it
+            if match_quality > best_score:
+                best_score = match_quality
+                best_match = mentor
+                best_common_tech = common_tech
+                best_common_interests = common_interests
+                best_preference_score = preference_score
+        
+        # If we found a match, add it to our matches list
+        if best_match and best_score > 0:
+            matches.append({
+                "mentor": {
+                    "name": best_match['name'],
+                    "registration_no": best_match['registration_no'],
+                    "semester": best_match['semester'],
+                    "branch": best_match['branch'],
+                    "tech_stack": best_match['tech_stack'],
+                    "department_id": best_match.get('department_id')
+                },
+                "mentee": {
+                    "name": mentee['name'],
+                    "registration_no": mentee['registration_no'],
+                    "semester": mentee['semester'],
+                    "branch": mentee['branch'],
+                    "tech_stack": mentee['tech_stack'],
+                    "department_id": mentee.get('department_id')
+                },
+                "match_quality": best_score,
+                "common_tech": best_common_tech,
+                "common_interests": best_common_interests,
+                "preference_score": best_preference_score
+            })
+            mentor_mentee_count[best_match['registration_no']] += 1
+        else:
+            unmatched_mentees.append(mentee)
+    
+    # Get list of mentors who still have capacity
+    available_mentors = [
+        mentor for mentor in mentors 
+        if mentor_mentee_count[mentor['registration_no']] < MAX_MENTEES_PER_MENTOR
+    ]
+    
+    return {
+        "matches": matches,
+        "unmatched_mentees": unmatched_mentees,
+        "unmatched_mentors": available_mentors,
+        "statistics": {
+            "total_participants": len(students),
+            "total_mentors": len(mentors),
+            "total_mentees": len(mentees),
+            "matches_made": len(matches),
+            "mentees_unmatched": len(unmatched_mentees),
+            "mentors_with_capacity": len(available_mentors)
+        }
+    }
 
 @api_view(['GET'])
 def match_participants(request):
