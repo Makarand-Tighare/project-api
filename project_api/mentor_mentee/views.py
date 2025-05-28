@@ -67,20 +67,29 @@ def create_participant(request):
         # Ensure the approval status is set to pending for new participants
         data['approval_status'] = 'pending'  # Force pending status for all new registrations
         
-        # Create serializer with data
-        serializer = ParticipantSerializer(data=data)
+        # Check if participant already exists
+        try:
+            participant = Participant.objects.get(registration_no=data.get('registration_no'))
+            # Update existing participant
+            serializer = ParticipantSerializer(participant, data=data)
+        except Participant.DoesNotExist:
+            # Create new participant
+            serializer = ParticipantSerializer(data=data)
+            
         if serializer.is_valid():
-            # Add files back to initial_data for the serializer's create method
+            # Add files back to initial_data for the serializer's create/update method
             for field_name, file_obj in files.items():
                 serializer.initial_data[field_name] = file_obj
             
-            # The serializer's create method will handle the file processing
+            # Save the participant (creates new or updates existing)
             participant = serializer.save()
+            
+            action = "updated" if participant.pk else "created"
             return Response({
-                'msg': 'Details saved successfully',
+                'msg': f'Details {action} successfully',
                 'note': 'Your registration is pending admin approval',
                 'participant': ParticipantSerializer(participant).data
-            }, status=status.HTTP_201_CREATED)
+            }, status=status.HTTP_201_CREATED if action == "created" else status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET'])
