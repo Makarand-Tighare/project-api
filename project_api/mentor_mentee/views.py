@@ -4026,13 +4026,56 @@ def archive_semester_data(request):
         # 3. Delete all current relationships for the department
         current_relationships.delete()
         
-        # 4. Reset participant status for the department
+        # 4. Reset participant status and profile data
         active_participants.update(
-            mentoring_preferences='',  # Clear preferences
-            approval_status='pending',  # Reset approval status
-            badges_earned=0,  # Reset badges
-            leaderboard_points=0,  # Reset points
-            is_super_mentor=False  # Reset super mentor status
+            # Clear mentoring preferences and status
+            mentoring_preferences='',
+            approval_status='pending',
+            
+            # Reset achievements
+            badges_earned=0,
+            leaderboard_points=0,
+            is_super_mentor=False,
+            
+            # Clear profile data
+            tech_stack='',
+            areas_of_interest='',
+            interest_preference1='',
+            interest_preference2='',
+            interest_preference3='',
+            previous_mentoring_experience='',
+            
+            # Reset research data
+            published_research_papers='None',
+            proof_of_research_publications=None,
+            
+            # Reset hackathon data
+            hackathon_participation='None',
+            number_of_wins=0,
+            number_of_participations=0,
+            hackathon_role=None,
+            proof_of_hackathon_participation=None,
+            
+            # Reset coding competitions data
+            coding_competitions_participate='no',
+            level_of_competition='None',
+            number_of_coding_competitions=0,
+            proof_of_coding_competitions=None,
+            
+            # Reset internship data
+            internship_experience='no',
+            number_of_internships=0,
+            internship_description='',
+            proof_of_internships=None,
+            
+            # Reset seminars & workshops data
+            seminars_or_workshops_attended='no',
+            describe_seminars_or_workshops='',
+            
+            # Reset extracurricular data
+            extracurricular_activities='no',
+            describe_extracurricular_activities='',
+            proof_of_extracurricular_activities=None
         )
         
         # Get department name for response
