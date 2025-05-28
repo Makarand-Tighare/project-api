@@ -69,27 +69,48 @@ def create_participant(request):
         
         # Check if participant already exists
         try:
-            participant = Participant.objects.get(registration_no=data.get('registration_no'))
-            # Update existing participant
-            serializer = ParticipantSerializer(participant, data=data)
+            existing_participant = Participant.objects.get(registration_no=data['registration_no'])
+            
+            # Check if this is a re-registration after archival
+            is_archived = (
+                not existing_participant.tech_stack and 
+                not existing_participant.areas_of_interest and 
+                existing_participant.approval_status == 'pending'
+            )
+            
+            if is_archived:
+                # This is a re-registration after archival, update the existing record
+                serializer = ParticipantSerializer(existing_participant, data=data)
+            else:
+                # This is a duplicate registration
+                return Response({
+                    'error': 'Registration number already exists',
+                    'message': 'A participant with this registration number is already registered'
+                }, status=status.HTTP_400_BAD_REQUEST)
         except Participant.DoesNotExist:
-            # Create new participant
+            # This is a new registration
             serializer = ParticipantSerializer(data=data)
             
         if serializer.is_valid():
-            # Add files back to initial_data for the serializer's create/update method
-            for field_name, file_obj in files.items():
-                serializer.initial_data[field_name] = file_obj
-            
-            # Save the participant (creates new or updates existing)
             participant = serializer.save()
             
-            action = "updated" if participant.pk else "created"
-            return Response({
-                'msg': f'Details {action} successfully',
-                'note': 'Your registration is pending admin approval',
-                'participant': ParticipantSerializer(participant).data
-            }, status=status.HTTP_201_CREATED if action == "created" else status.HTTP_200_OK)
+            # Handle file uploads
+            for field_name, file_obj in files.items():
+                if field_name == 'proof_of_research_publications':
+                    participant.proof_of_research_publications = file_obj.read()
+                elif field_name == 'proof_of_hackathon_participation':
+                    participant.proof_of_hackathon_participation = file_obj.read()
+                elif field_name == 'proof_of_coding_competitions':
+                    participant.proof_of_coding_competitions = file_obj.read()
+                elif field_name == 'proof_of_academic_performance':
+                    participant.proof_of_academic_performance = file_obj.read()
+                elif field_name == 'proof_of_internships':
+                    participant.proof_of_internships = file_obj.read()
+                elif field_name == 'proof_of_extracurricular_activities':
+                    participant.proof_of_extracurricular_activities = file_obj.read()
+            
+            participant.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET'])
