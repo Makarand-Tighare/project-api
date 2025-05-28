@@ -608,7 +608,12 @@ def match_participants(request):
         # Check if there are pending approvals for this department
         pending_approvals_count = Participant.objects.filter(
             approval_status='pending',
-            department=department_filter
+            department=department_filter,
+            # Exclude archived participants who haven't re-registered
+            tech_stack__isnull=False,
+            tech_stack__gt='',
+            areas_of_interest__isnull=False,
+            areas_of_interest__gt=''
         ).count()
         
         if pending_approvals_count > 0:
@@ -627,7 +632,14 @@ def match_participants(request):
         )
     else:
         # Check if there are pending approvals overall
-        pending_approvals_count = Participant.objects.filter(approval_status='pending').count()
+        pending_approvals_count = Participant.objects.filter(
+            approval_status='pending',
+            # Exclude archived participants who haven't re-registered
+            tech_stack__isnull=False,
+            tech_stack__gt='',
+            areas_of_interest__isnull=False,
+            areas_of_interest__gt=''
+        ).count()
         
         if pending_approvals_count > 0:
             return Response({
