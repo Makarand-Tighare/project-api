@@ -4025,8 +4025,8 @@ def archive_semester_data(request):
             mentor_feedback = MentorFeedback.objects.filter(relationship__mentor=participant)
             mentee_feedback = MentorFeedback.objects.filter(relationship__mentee=participant)
             
-            mentor_rating = mentor_feedback.aggregate(Avg('rating'))['rating__avg'] if was_mentor else None
-            mentee_rating = mentee_feedback.aggregate(Avg('rating'))['rating__avg'] if was_mentee else None
+            mentor_rating = mentor_feedback.aggregate(Avg('overall_rating'))['overall_rating__avg'] if was_mentor else None
+            mentee_rating = mentee_feedback.aggregate(Avg('overall_rating'))['overall_rating__avg'] if was_mentee else None
             
             # Get session participation
             sessions_attended = Session.objects.filter(participants=participant).count()
