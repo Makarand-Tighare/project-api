@@ -85,72 +85,40 @@ def create_participant(request):
 
 @api_view(['GET'])
 def list_participants(request):
-    """List all participants"""
+    """List all participants with optional filtering"""
     try:
-        # Check if the user is a department admin
-        user = request.user
-        department_filter = None
+        # Get query parameters
+        status_filter = request.query_params.get('status', 'active')
+        approval_filter = request.query_params.get('approval_status')
+        department_id = request.query_params.get('department_id')
         
-        # If this is a department admin, they should only see participants from their department
-        if hasattr(user, 'is_department_admin') and user.is_department_admin and user.department:
-            department_filter = user.department
-            print(f"Department admin filtering for department: {department_filter.name}")
+        # Base query - only show active participants who haven't been archived
+        participants = Participant.objects.filter(
+            status='active',  # Only active participants
+            mentoring_preferences__isnull=False,  # Must have mentoring preferences set
+            mentoring_preferences__ne=''  # Must not be empty string
+        )
+        
+        # Apply filters if provided
+        if approval_filter:
+            participants = participants.filter(approval_status=approval_filter)
             
-            # Get participants only from this department
-            participants = Participant.objects.filter(department=department_filter)
-        else:
-            # Regular admin or non-logged in user gets all participants
-            participants = Participant.objects.all()
+        if department_id:
+            participants = participants.filter(department_id=department_id)
             
+        # Serialize the data
         serializer = ParticipantListSerializer(participants, many=True)
         
-        # Add mobile numbers from Student model
-        from account.models import Student
-        participant_data = serializer.data
+        return Response({
+            'count': participants.count(),
+            'participants': serializer.data
+        })
         
-        # Create a dictionary mapping reg_no to mobile_number from Student model
-        student_mobile_numbers = {}
-        try:
-            # Get all registration numbers
-            reg_nos = [p['registration_no'] for p in participant_data]
-            # Query students with those reg_nos
-            students = Student.objects.filter(reg_no__in=reg_nos)
-            # Create mapping
-            for student in students:
-                student_mobile_numbers[student.reg_no] = student.mobile_number
-        except Exception as e:
-            print(f"Error fetching student mobile numbers: {e}")
-            
-        # Add mobile numbers to participant data
-        for participant in participant_data:
-            reg_no = participant['registration_no']
-            # Try to get from Student model first
-            if reg_no in student_mobile_numbers:
-                participant['mobile_number'] = student_mobile_numbers[reg_no]
-            else:
-                # Fallback to participant model if needed
-                try:
-                    p = Participant.objects.get(registration_no=reg_no)
-                    participant['mobile_number'] = p.mobile_number
-                except:
-                    participant['mobile_number'] = None
-                    
-        # Add department info to response
-        response_data = {
-            'participants': participant_data,
-            'count': participants.count()
-        }
-        
-        if department_filter:
-            response_data['department_filter'] = {
-                'id': department_filter.id,
-                'name': department_filter.name,
-                'code': department_filter.code
-            }
-            
-        return Response(response_data)
     except Exception as e:
-        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({
+            'error': 'Failed to fetch participants',
+            'details': str(e)
+        }, status=500)
 
 # Function to get LinkedIn user profile
 def get_linkedin_user_id(access_token):
