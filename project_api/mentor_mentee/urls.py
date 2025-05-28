@@ -1,6 +1,6 @@
 from django.urls import path
 from . import views
-from .views import view_proof
+from .views import view_proof, user_activity_heatmap
 
 urlpatterns = [
     # Add the new proofs endpoint
@@ -76,4 +76,5 @@ urlpatterns = [
     path('feedback/app/summary/', views.get_app_feedback_summary, name='get_app_feedback_summary'),
     path('feedback/delete/', views.delete_feedback, name='delete_feedback'),
     path('feedback/send-reminders/', views.send_feedback_reminders, name='send_feedback_reminders'),
+    path('user/activity/<str:registration_no>/', user_activity_heatmap, name='user-activity-heatmap'),
 ]

@@ -17,6 +17,9 @@ from account.models import Student  # Import Student model for email lookup
 from django.utils import timezone
 from django.http import HttpResponse, Http404
 import base64
+from datetime import timedelta
+from django.db.models.functions import TruncDate
+from django.db.models import Count, Q
 
 load_dotenv()
 
@@ -4257,3 +4260,87 @@ def get_participant_proofs(request, registration_no):
             "error": "Failed to fetch proofs",
             "details": str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+def user_activity_heatmap(request, registration_no):
+    """
+    Returns daily activity data for a user for the last 6 months, suitable for a calendar heatmap.
+    Supports filtering by activity type via ?type=quiz|session|badge|feedback
+    """
+    activity_type = request.query_params.get('type', None)
+    end_date = timezone.now().date()
+    start_date = end_date - timedelta(days=180)
+    activity_counts = {}
+
+    # Quiz completions
+    if activity_type in [None, '', 'quiz', 'all']:
+        from .models import QuizResult
+        quiz_qs = QuizResult.objects.filter(
+            participant__registration_no=registration_no,
+            status='completed',
+            completed_date__date__gte=start_date,
+            completed_date__date__lte=end_date
+        )
+        quiz_by_day = quiz_qs.annotate(date=TruncDate('completed_date')).values('date').annotate(count=Count('id')).values('date', 'count')
+        for entry in quiz_by_day:
+            d = entry['date'].strftime('%Y-%m-%d')
+            activity_counts[d] = activity_counts.get(d, 0) + entry['count']
+
+    # Session attendance
+    if activity_type in [None, '', 'session', 'all']:
+        from .models import Session, Participant
+        try:
+            participant = Participant.objects.get(registration_no=registration_no)
+            session_qs = Session.objects.filter(
+                Q(participants=participant) | Q(mentor=participant),
+                date_time__date__gte=start_date,
+                date_time__date__lte=end_date
+            )
+            session_by_day = session_qs.annotate(date=TruncDate('date_time')).values('date').annotate(count=Count('session_id')).values('date', 'count')
+            for entry in session_by_day:
+                d = entry['date'].strftime('%Y-%m-%d')
+                activity_counts[d] = activity_counts.get(d, 0) + entry['count']
+        except Participant.DoesNotExist:
+            pass
+
+    # Badge claims
+    if activity_type in [None, '', 'badge', 'all']:
+        from .models import ParticipantBadge
+        badge_qs = ParticipantBadge.objects.filter(
+            participant__registration_no=registration_no,
+            is_claimed=True,
+            claimed_date__date__gte=start_date,
+            claimed_date__date__lte=end_date
+        )
+        badge_by_day = badge_qs.annotate(date=TruncDate('claimed_date')).values('date').annotate(count=Count('id')).values('date', 'count')
+        for entry in badge_by_day:
+            d = entry['date'].strftime('%Y-%m-%d')
+            activity_counts[d] = activity_counts.get(d, 0) + entry['count']
+
+    # Feedback submissions
+    if activity_type in [None, '', 'feedback', 'all']:
+        from .models import MentorFeedback, ApplicationFeedback
+        feedback_qs = MentorFeedback.objects.filter(
+            mentee__registration_no=registration_no,
+            created_at__date__gte=start_date,
+            created_at__date__lte=end_date
+        )
+        feedback_by_day = feedback_qs.annotate(date=TruncDate('created_at')).values('date').annotate(count=Count('id')).values('date', 'count')
+        for entry in feedback_by_day:
+            d = entry['date'].strftime('%Y-%m-%d')
+            activity_counts[d] = activity_counts.get(d, 0) + entry['count']
+        app_feedback_qs = ApplicationFeedback.objects.filter(
+            participant__registration_no=registration_no,
+            created_at__date__gte=start_date,
+            created_at__date__lte=end_date
+        )
+        app_feedback_by_day = app_feedback_qs.annotate(date=TruncDate('created_at')).values('date').annotate(count=Count('id')).values('date', 'count')
+        for entry in app_feedback_by_day:
+            d = entry['date'].strftime('%Y-%m-%d')
+            activity_counts[d] = activity_counts.get(d, 0) + entry['count']
+
+    # Prepare response: sorted by date
+    result = [
+        {"date": d, "count": activity_counts[d]} for d in sorted(activity_counts.keys())
+    ]
+    return Response(result)
