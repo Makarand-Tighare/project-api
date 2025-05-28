@@ -4006,12 +4006,11 @@ def user_activity_heatmap(request, registration_no):
     start_date = end_date - timedelta(days=180)
     activity_counts = {}
 
-    # Quiz completions
+    # Quiz completions (including archived)
     if activity_type in [None, '', 'quiz', 'all']:
         from .models import QuizResult
         quiz_qs = QuizResult.objects.filter(
             participant__registration_no=registration_no,
-            status='completed',
             completed_date__date__gte=start_date,
             completed_date__date__lte=end_date
         )
@@ -4020,13 +4019,12 @@ def user_activity_heatmap(request, registration_no):
             d = entry['date'].strftime('%Y-%m-%d')
             activity_counts[d] = activity_counts.get(d, 0) + entry['count']
 
-    # Session attendance
+    # Session attendance (including archived)
     if activity_type in [None, '', 'session', 'all']:
         from .models import Session, Participant
         try:
-            participant = Participant.objects.get(registration_no=registration_no)
             session_qs = Session.objects.filter(
-                Q(participants=participant) | Q(mentor=participant),
+                Q(participants__registration_no=registration_no) | Q(mentor__registration_no=registration_no),
                 date_time__date__gte=start_date,
                 date_time__date__lte=end_date
             )
@@ -4034,15 +4032,14 @@ def user_activity_heatmap(request, registration_no):
             for entry in session_by_day:
                 d = entry['date'].strftime('%Y-%m-%d')
                 activity_counts[d] = activity_counts.get(d, 0) + entry['count']
-        except Participant.DoesNotExist:
-            pass
+        except Exception as e:
+            print(f"Error fetching sessions: {e}")
 
-    # Badge claims
+    # Badge claims (including archived)
     if activity_type in [None, '', 'badge', 'all']:
         from .models import ParticipantBadge
         badge_qs = ParticipantBadge.objects.filter(
             participant__registration_no=registration_no,
-            is_claimed=True,
             claimed_date__date__gte=start_date,
             claimed_date__date__lte=end_date
         )
@@ -4051,11 +4048,11 @@ def user_activity_heatmap(request, registration_no):
             d = entry['date'].strftime('%Y-%m-%d')
             activity_counts[d] = activity_counts.get(d, 0) + entry['count']
 
-    # Feedback submissions
+    # Feedback submissions (including archived)
     if activity_type in [None, '', 'feedback', 'all']:
         from .models import MentorFeedback, ApplicationFeedback
         feedback_qs = MentorFeedback.objects.filter(
-            mentee__registration_no=registration_no,
+            Q(mentee__registration_no=registration_no) | Q(mentor__registration_no=registration_no),
             created_at__date__gte=start_date,
             created_at__date__lte=end_date
         )
@@ -4072,6 +4069,21 @@ def user_activity_heatmap(request, registration_no):
         for entry in app_feedback_by_day:
             d = entry['date'].strftime('%Y-%m-%d')
             activity_counts[d] = activity_counts.get(d, 0) + entry['count']
+
+    # Get archived activity from ParticipantHistory
+    from .models import ParticipantHistory
+    history_qs = ParticipantHistory.objects.filter(
+        registration_no=registration_no,
+        end_date__gte=start_date,
+        end_date__lte=end_date
+    )
+    for history in history_qs:
+        d = history.end_date.strftime('%Y-%m-%d')
+        # Add historical activities
+        if activity_type in [None, '', 'quiz', 'all']:
+            activity_counts[d] = activity_counts.get(d, 0) + history.total_quizzes_completed
+        if activity_type in [None, '', 'session', 'all']:
+            activity_counts[d] = activity_counts.get(d, 0) + history.sessions_attended + history.sessions_conducted
 
     # Prepare response: sorted by date
     result = [
