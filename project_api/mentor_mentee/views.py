@@ -104,7 +104,13 @@ def list_participants(request):
         if approval_filter:
             participants = participants.filter(approval_status=approval_filter)
             
-        if department_id:
+        # Check if user is a department admin
+        if hasattr(request.user, 'is_department_admin') and request.user.is_department_admin:
+            # If user is department admin, only show participants from their department
+            if request.user.department:
+                participants = participants.filter(department=request.user.department)
+        elif department_id:
+            # If not department admin but department_id provided, filter by that
             participants = participants.filter(department_id=department_id)
             
         # Serialize the data
