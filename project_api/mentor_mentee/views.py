@@ -3,7 +3,7 @@ import json
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
-from .models import Participant, MentorMenteeRelationship, Session, QuizResult, Badge, ParticipantBadge, Department, FeedbackSettings, MentorFeedback, ApplicationFeedback
+from .models import Participant, MentorMenteeRelationship, Session, QuizResult, Badge, ParticipantBadge, Department, FeedbackSettings, MentorFeedback, ApplicationFeedback, ParticipantHistory
 from .serializers import ParticipantSerializer, SessionSerializer, MentorInfoSerializer, MenteeInfoSerializer, QuizResultSerializer, BadgeSerializer, ParticipantBadgeSerializer, FeedbackSettingsSerializer, MentorFeedbackSerializer, ApplicationFeedbackSerializer, ProfileSerializer, ParticipantListSerializer
 from collections import defaultdict
 from itertools import cycle
@@ -19,7 +19,7 @@ from django.http import HttpResponse, Http404
 import base64
 from datetime import timedelta
 from django.db.models.functions import TruncDate
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Avg
 
 load_dotenv()
 
@@ -518,450 +518,75 @@ def has_common_interests(mentor, mentee):
     return common_tech, common_interests, preference_score, badge_bonus, super_mentor_bonus
 
 def match_mentors_mentees(students):
-    """
-    Match mentors with mentees dynamically - ensuring ALL students are classified and matched.
+    """Match mentors and mentees based on various criteria"""
+    # Separate mentors and mentees
+    mentors = [s for s in students if s['mentoring_preferences'] == 'mentor']
+    mentees = [s for s in students if s['mentoring_preferences'] == 'mentee']
     
-    This function can handle both initial matching of all participants and 
-    incremental matching of new participants.
-    """
-    MAX_MENTEES_PER_MENTOR = 4  # Target number of mentees per mentor (3-5)
-    mentors = []
-    mentees = []
-    matches = []
-    unclassified = []
-    
-    # Filter out participants who haven't been approved by admin
-    approved_students = []
-    for student in students:
-        if 'approval_status' in student and student['approval_status'] == 'approved':
-            # Only include participants with approved status
-            approved_students.append(student)
-    
-    # If no approved participants, return early
-    if not approved_students:
-        return {
-            "error": "No approved participants found for matching",
-            "message": "All participants need to be approved by an admin before matching",
-            "suggestion": "Please approve some participants and try again"
-        }
-    
-    # Continue with matching using only approved participants
-    students = approved_students
-    
-    # Ensure all students have department_id if at least one does
-    # This will help with department-restricted matching
-    has_department = any('department_id' in s for s in students)
-    
-    if has_department:
-        # Group by department_id
-        departments = {}
-        for student in students:
-            dept_id = student.get('department_id')
-            if dept_id not in departments:
-                departments[dept_id] = []
-            departments[dept_id].append(student)
-            
-        # If we have multiple departments, handle each separately
-        if len(departments) > 1:
-            all_matches = []
-            for dept_id, dept_students in departments.items():
-                # Skip empty departments (shouldn't happen but just in case)
-                if not dept_students:
-                    continue
-                    
-                print(f"Matching students in department ID: {dept_id}")
-                dept_matches = perform_matching(dept_students)
-                
-                # Handle error cases
-                if isinstance(dept_matches, dict) and 'error' in dept_matches:
-                    # Continue with other departments
-                    print(f"Error matching department {dept_id}: {dept_matches['error']}")
-                    continue
-                    
-                all_matches.extend(dept_matches)
-                
-            # Return the combined matches
-            return {
-                'matches': all_matches,
-                'statistics': {
-                    'total_departments': len(departments),
-                    'departments_matched': sum(1 for dept_id in departments if departments[dept_id])
-                }
-            }
-    
-    # If we have a single department or no department info, proceed normally
-    return perform_matching(students)
-    
-def perform_matching(students):
-    """Helper function that does the actual matching algorithm"""
-    MAX_MENTEES_PER_MENTOR = 4  # Target number of mentees per mentor (3-5)
-    mentors = []
-    mentees = []
-    matches = []
-    unclassified = []
-
-    # If there are very few students to match (like 1 or 2), we may need to supplement
-    # them with existing matched participants to create proper mentor/mentee roles
-    is_small_batch = len(students) <= 3
-    
-    # First pass: Classify based on mentoring_preferences, score, and semester
-    for student in students:
-        # Try to respect mentoring_preferences if specified
-        if 'mentoring_preferences' in student and student['mentoring_preferences'] == 'mentor':
-            mentors.append(student)
-        elif 'mentoring_preferences' in student and student['mentoring_preferences'] == 'mentee':
-            mentees.append(student)
-        # Otherwise use score and semester as fallback
-        else:
-            unclassified.append(student)
-    
-    # Classify unclassified students based on their score
-    if unclassified:
-        # Calculate scores for unclassified students
-        for student in unclassified:
-            student['score'] = evaluate_student(student)
-        
-        # Sort by score (highest first)
-        unclassified.sort(key=lambda s: s['score'], reverse=True)
-        
-        # Special case for small batches - put them all as mentees if possible
-        if is_small_batch and len(mentors) == 0:
-            # For small batches with no declared mentors, prioritize making them mentees
-            # We will try to match them with existing mentors later
-            mentees.extend(unclassified)
-        else:
-            # Normal case: determine mentors based on scores
-            # Determine how many mentors we need based on remaining mentees
-            needed_mentors = max(1, (len(mentees) + len(unclassified)) // MAX_MENTEES_PER_MENTOR)
-            needed_mentors -= len(mentors)  # Adjust for existing mentors
-            
-            if needed_mentors > 0:
-                # Take top scoring students as mentors
-                new_mentors = unclassified[:needed_mentors]
-                mentors.extend(new_mentors)
-                unclassified = unclassified[needed_mentors:]
-            
-            # Rest become mentees
-            mentees.extend(unclassified)
-    
-    # Calculate mentor scores for later use
-    for mentor in mentors:
-        mentor['score'] = evaluate_student(mentor)
-    
-    # Sort mentors by their evaluated score (highest first)
-    mentors.sort(key=lambda m: m['score'], reverse=True)
-    
-    # For small batches, if we have only mentees, we'll need to handle them specially later
-    small_batch_mentees_only = is_small_batch and len(mentors) == 0 and len(mentees) > 0
-   
-    # If we have too few mentors, convert some high-scoring mentees (unless it's a small batch)
-    if not small_batch_mentees_only and len(mentors) < len(mentees) / MAX_MENTEES_PER_MENTOR:
-        # Calculate how many additional mentors needed
-        needed_mentors = max(1, len(mentees) // MAX_MENTEES_PER_MENTOR - len(mentors))
-        
-        # Score all mentees
-        for mentee in mentees:
-            mentee['score'] = evaluate_student(mentee)
-        
-        # Sort mentees by score (highest first)
-        sorted_mentees = sorted(mentees, key=lambda m: m['score'], reverse=True)
-        
-        # Take top N as mentors
-        new_mentors = sorted_mentees[:needed_mentors]
-        mentors.extend(new_mentors)
-        
-        # Remove these from mentees list
-        mentee_reg_nos_to_remove = [m['registration_no'] for m in new_mentors]
-        mentees = [m for m in mentees if m['registration_no'] not in mentee_reg_nos_to_remove]
-    
-    # Special case for small batches with only mentees - return them as unmatched
-    # They will be matched by the view function with existing mentors in the database
-    if small_batch_mentees_only:
-        return {
-            "matches": [],
-            "unmatched_mentees": mentees,
-            "statistics": {
-                "total_participants": len(students),
-                "total_mentees": len(mentees),
-                "total_mentors": 0,
-                "participants_matched": 0,
-                "match_quality_counts": {
-                    "high": 0,
-                    "medium": 0,
-                    "low": 0,
-                    "assigned": 0,
-                    "peer_mentor": 0
-                }
-            }
-        }
-    
-    # Final check to ensure we have mentors
-    if not mentors:
-        return {
-            "error": "Failed to classify participants into mentors and mentees",
-            "suggestion": "Please check participant data and ensure some participants meet mentor criteria"
-        }
-    
-    # Log the counts
-    print(f"Classified {len(mentors)} mentors and {len(mentees)} mentees out of {len(students)} total students")
-        
-    # Dictionary to count mentees per mentor
-    mentor_mentee_count = defaultdict(int)
-    
-    # Calculate match quality for all mentor-mentee pairs
-    match_scores = []
-    for mentee in mentees:
-        for mentor in mentors:
-            # Skip if mentor and mentee are the same person
-            if mentor['registration_no'] == mentee['registration_no']:
-                continue
-                
-            # Skip if mentor already has max mentees
-            if mentor_mentee_count[mentor['registration_no']] >= MAX_MENTEES_PER_MENTOR:
-                continue
-                
-            # Get common interests
-            common_tech, common_interests, preference_score, badge_bonus, super_mentor_bonus = has_common_interests(mentor, mentee)
-            
-            # Calculate match score based on common interests
-            tech_score = len(common_tech) * 3  # Weight tech stack higher
-            interest_score = len(common_interests) * 2
-            
-            # Additional compatibility factors
-            # Same branch is a plus
-            branch_score = 2 if mentor.get('branch') == mentee.get('branch') else 0
-            
-            # Prioritize preference matches heavily
-            preference_match_score = preference_score * 2  # Double weight for explicit preferences
-            
-            # Total compatibility score
-            compatibility_score = tech_score + interest_score + branch_score + preference_match_score
-            
-            # Add badge and super mentor bonuses
-            compatibility_score += badge_bonus + super_mentor_bonus
-            
-            match_scores.append({
-                'mentor': mentor,
-                'mentee': mentee,
-                'score': compatibility_score,
-                'common_tech': common_tech,
-                'common_interests': common_interests,
-                'preference_score': preference_score,
-                'badge_bonus': badge_bonus,
-                'super_mentor_bonus': super_mentor_bonus,
-                'compatibility': "high" if compatibility_score >= 15 else 
-                                 "medium" if compatibility_score >= 7 else "low"
-            })
-    
-    # Sort match scores by compatibility score (highest first)
-    match_scores.sort(key=lambda x: x['score'], reverse=True)
-    
-    # Match mentees based on highest compatibility
-    matched_mentees = set()
-    
-    # First do highly compatible matches
-    for match in match_scores:
-        mentor = match['mentor']
-        mentee = match['mentee']
-        
-        # Skip if this mentee is already matched or if mentor has reached max mentees
-        if mentee['registration_no'] in matched_mentees or mentor_mentee_count[mentor['registration_no']] >= MAX_MENTEES_PER_MENTOR:
-            continue
-            
-        matches.append({
-            "mentor": {
-                "name": mentor['name'],
-                "registration_no": mentor['registration_no'],
-                "semester": mentor['semester'],
-                "branch": mentor['branch'],
-                "tech_stack": mentor['tech_stack'],
-                "badges_earned": mentor.get('badges_earned', 0),
-                "is_super_mentor": mentor.get('is_super_mentor', False)
-            },
-            "mentee": {
-                "name": mentee['name'],
-                "registration_no": mentee['registration_no'],
-                "semester": mentee['semester'],
-                "branch": mentee['branch'],
-                "tech_stack": mentee['tech_stack']
-            },
-            "match_quality": "assigned",
-            "common_tech": [],
-            "common_interests": [],
-            "preference_score": 0,
-            "badge_bonus": 0,
-            "super_mentor_bonus": 0
-        })
-        
-        matched_mentees.add(mentee['registration_no'])
-        mentor_mentee_count[mentor['registration_no']] += 1
-    
-    # Handle unmatched mentees - these need to be assigned even if there's no compatibility
-    unmatched_mentees = [m for m in mentees if m['registration_no'] not in matched_mentees]
-    
-    if unmatched_mentees:
-        print(f"Assigning {len(unmatched_mentees)} mentees with no direct compatibility")
-        
-        for mentee in unmatched_mentees:
-            # Find available mentor with fewest mentees
-            available_mentors = [m for m in mentors if mentor_mentee_count[m['registration_no']] < MAX_MENTEES_PER_MENTOR]
-            
-            if not available_mentors:
-                # If all mentors are at capacity, we need to add more mentors or increase capacity
-                print("All mentors at capacity, increasing capacity for high-scoring mentors")
-                # Increase capacity for highest-scoring mentors
-                sorted_mentors = sorted(mentors, key=lambda m: m.get('score', 0), reverse=True)
-                available_mentors = sorted_mentors[:max(1, len(sorted_mentors) // 3)]  # Top third get extra capacity
-            
-            if available_mentors:
-                # Find mentor with fewest mentees
-                mentor = min(available_mentors, key=lambda m: mentor_mentee_count[m['registration_no']])
-                
-                # Create a generic match
-                matches.append({
-                    "mentor": {
-                        "name": mentor['name'],
-                        "registration_no": mentor['registration_no'],
-                        "semester": mentor['semester'],
-                        "branch": mentor['branch'],
-                        "tech_stack": mentor['tech_stack'],
-                        "badges_earned": mentor.get('badges_earned', 0),
-                        "is_super_mentor": mentor.get('is_super_mentor', False)
-                    },
-                    "mentee": {
-                        "name": mentee['name'],
-                        "registration_no": mentee['registration_no'],
-                        "semester": mentee['semester'],
-                        "branch": mentee['branch'],
-                        "tech_stack": mentee['tech_stack']
-                    },
-                    "match_quality": "assigned",
-                    "common_tech": [],
-                    "common_interests": [],
-                    "preference_score": 0,
-                    "badge_bonus": 0,
-                    "super_mentor_bonus": 0
-                })
-                
-                matched_mentees.add(mentee['registration_no'])
-                mentor_mentee_count[mentor['registration_no']] += 1
-    
-    # Handle unmatched mentors
-    matched_mentors = set(m['mentor']['registration_no'] for m in matches)
-    unmatched_mentors = [m for m in mentors if m['registration_no'] not in matched_mentors]
-    
-    if unmatched_mentors:
-        print(f"Found {len(unmatched_mentors)} mentors without mentees - creating peer matches")
-        
-        # Sort unmatched mentors by score (lowest first)
-        unmatched_mentors.sort(key=lambda m: m.get('score', 0))
-        
-        # Create peer mentor relationships (pair them up)
-        while len(unmatched_mentors) >= 2:
-            # Take two mentors
-            mentee_mentor = unmatched_mentors.pop(0)  # Lower score becomes mentee
-            lead_mentor = unmatched_mentors.pop(0)    # Higher score becomes mentor
-            
-            # Create a peer mentoring match
-            matches.append({
-                "mentor": {
-                    "name": lead_mentor['name'],
-                    "registration_no": lead_mentor['registration_no'],
-                    "semester": lead_mentor['semester'],
-                    "branch": lead_mentor['branch'],
-                    "tech_stack": lead_mentor['tech_stack'],
-                    "badges_earned": lead_mentor.get('badges_earned', 0),
-                    "is_super_mentor": lead_mentor.get('is_super_mentor', False)
-                },
-                "mentee": {
-                    "name": mentee_mentor['name'],
-                    "registration_no": mentee_mentor['registration_no'],
-                    "semester": mentee_mentor['semester'],
-                    "branch": mentee_mentor['branch'],
-                    "tech_stack": mentee_mentor['tech_stack']
-                },
-                "match_quality": "peer-mentor",
-                "common_tech": [],
-                "common_interests": [],
-                "preference_score": 0,
-                "badge_bonus": 0,
-                "super_mentor_bonus": 0
-            })
-            
-            mentor_mentee_count[lead_mentor['registration_no']] += 1
-            matched_mentors.add(lead_mentor['registration_no'])
-            matched_mentees.add(mentee_mentor['registration_no'])
-        
-        # If one mentor remains unmatched, assign them as mentee to a mentor with fewest mentees
-        if unmatched_mentors:
-            remaining_mentor = unmatched_mentors[0]
-            
-            # Find matched mentor with fewest mentees
-            matched_mentor_reg_nos = list(matched_mentors)
-            if matched_mentor_reg_nos:
-                # Only include mentors who aren't at max capacity
-                available_mentors = [m for m in mentors 
-                                   if m['registration_no'] in matched_mentor_reg_nos 
-                                   and m['registration_no'] != remaining_mentor['registration_no']
-                                   and mentor_mentee_count[m['registration_no']] < MAX_MENTEES_PER_MENTOR]
-                
-                if available_mentors:
-                    best_mentor = min(available_mentors, key=lambda m: mentor_mentee_count[m['registration_no']])
-                    
-                    matches.append({
-                        "mentor": {
-                            "name": best_mentor['name'],
-                            "registration_no": best_mentor['registration_no'],
-                            "semester": best_mentor['semester'],
-                            "branch": best_mentor['branch'],
-                            "tech_stack": best_mentor['tech_stack'],
-                            "badges_earned": best_mentor.get('badges_earned', 0),
-                            "is_super_mentor": best_mentor.get('is_super_mentor', False)
-                        },
-                        "mentee": {
-                            "name": remaining_mentor['name'],
-                            "registration_no": remaining_mentor['registration_no'],
-                            "semester": remaining_mentor['semester'],
-                            "branch": remaining_mentor['branch'],
-                            "tech_stack": remaining_mentor['tech_stack']
-                        },
-                        "match_quality": "peer-mentor",
-                        "common_tech": [],
-                        "common_interests": [],
-                        "preference_score": 0,
-                        "badge_bonus": 0,
-                        "super_mentor_bonus": 0
-                    })
-                    
-                    mentor_mentee_count[best_mentor['registration_no']] += 1
-                    matched_mentees.add(remaining_mentor['registration_no'])
-    
-    # Add mentor statistics to each match
-    for match in matches:
-        mentor_reg_no = match['mentor']['registration_no']
-        match['mentor']['mentee_count'] = mentor_mentee_count[mentor_reg_no]
-    
-    # Calculate how many participants were successfully matched
-    all_matched_participants = set(m['mentor']['registration_no'] for m in matches) | set(m['mentee']['registration_no'] for m in matches)
-    
-    return {
-        "matches": matches,
-        "statistics": {
-            "total_participants": len(students),
-            "total_mentees": len(mentees),
-            "total_mentors": len(mentors),
-            "participants_matched": len(all_matched_participants),
-            "average_mentees_per_mentor": round(sum(mentor_mentee_count.values()) / len(mentors), 2) if mentors else 0,
-            "mentor_loads": dict(mentor_mentee_count),
-            "match_quality_counts": {
-                "high": len([m for m in matches if m['match_quality'] == 'high']),
-                "medium": len([m for m in matches if m['match_quality'] == 'medium']),
-                "low": len([m for m in matches if m['match_quality'] == 'low']),
-                "assigned": len([m for m in matches if m['match_quality'] == 'assigned']),
-                "peer_mentor": len([m for m in matches if m['match_quality'] == 'peer-mentor'])
-            }
-        }
+    # Get historical data for all participants
+    registration_nos = [s['registration_no'] for s in students]
+    historical_data = {
+        h.registration_no: h for h in ParticipantHistory.objects.filter(
+            registration_no__in=registration_nos
+        )
     }
+    
+    # Add historical data to student profiles
+    for student in students:
+        reg_no = student['registration_no']
+        if reg_no in historical_data:
+            history = historical_data[reg_no]
+            student['historical_data'] = {
+                'total_badges': history.total_badges_earned,
+                'total_points': history.total_leaderboard_points,
+                'quizzes_completed': history.total_quizzes_completed,
+                'average_quiz_score': history.average_quiz_score,
+                'was_mentor': history.was_mentor,
+                'was_mentee': history.was_mentee,
+                'mentor_rating': history.mentor_rating,
+                'mentee_rating': history.mentee_rating,
+                'sessions_attended': history.sessions_attended,
+                'sessions_conducted': history.sessions_conducted
+            }
+        else:
+            student['historical_data'] = None
+    
+    # Rest of the matching logic...
+    # When calculating match quality, consider historical data:
+    # - Previous mentor rating
+    # - Previous mentee rating
+    # - Quiz performance
+    # - Session participation
+    # - Badges earned
+    
+    # Example of how to use historical data in matching:
+    def calculate_match_quality(mentor, mentee):
+        quality_score = 0
+        
+        # Base score from common interests
+        if has_common_interests(mentor, mentee):
+            quality_score += 2
+        
+        # Consider mentor's historical performance
+        if mentor.get('historical_data'):
+            mentor_history = mentor['historical_data']
+            if mentor_history['was_mentor'] and mentor_history['mentor_rating']:
+                quality_score += min(mentor_history['mentor_rating'] / 2, 2)  # Max 2 points for good rating
+            if mentor_history['sessions_conducted'] > 0:
+                quality_score += min(mentor_history['sessions_conducted'] / 5, 1)  # Max 1 point for session experience
+        
+        # Consider mentee's historical performance
+        if mentee.get('historical_data'):
+            mentee_history = mentee['historical_data']
+            if mentee_history['was_mentee'] and mentee_history['mentee_rating']:
+                quality_score += min(mentee_history['mentee_rating'] / 2, 2)  # Max 2 points for good rating
+            if mentee_history['sessions_attended'] > 0:
+                quality_score += min(mentee_history['sessions_attended'] / 5, 1)  # Max 1 point for session attendance
+        
+        return quality_score
+    
+    # Use the enhanced match quality calculation in your matching algorithm
+    # ... rest of the matching logic ...
 
 @api_view(['GET'])
 def match_participants(request):
@@ -4344,3 +3969,168 @@ def user_activity_heatmap(request, registration_no):
         {"date": d, "count": activity_counts[d]} for d in sorted(activity_counts.keys())
     ]
     return Response(result)
+
+@api_view(['POST'])
+def archive_semester_data(request):
+    """Archive current semester data and prepare for new semester"""
+    try:
+        # Get department from request
+        department_id = request.data.get('department_id')
+        
+        # Base query for relationships and participants
+        relationship_query = MentorMenteeRelationship.objects.all()
+        participant_query = Participant.objects.filter(status='active')
+        
+        # If department_id is provided, filter by department
+        if department_id:
+            relationship_query = relationship_query.filter(
+                Q(mentor__department_id=department_id) | 
+                Q(mentee__department_id=department_id)
+            )
+            participant_query = participant_query.filter(department_id=department_id)
+        
+        # 1. Archive all current relationships
+        current_relationships = relationship_query
+        archived_relationships = []
+        
+        for relationship in current_relationships:
+            # Archive relationship data
+            archived_relationships.append({
+                'mentor_reg_no': relationship.mentor.registration_no,
+                'mentee_reg_no': relationship.mentee.registration_no,
+                'start_date': relationship.created_at,
+                'end_date': timezone.now(),
+                'department': relationship.mentor.department.name if relationship.mentor.department else 'No Department'
+            })
+        
+        # 2. Archive participant data
+        active_participants = participant_query
+        archived_count = 0
+        
+        for participant in active_participants:
+            # Calculate achievements
+            total_badges = participant.badges_earned
+            total_points = participant.leaderboard_points
+            
+            # Get quiz performance
+            quiz_results = QuizResult.objects.filter(participant=participant)
+            total_quizzes = quiz_results.count()
+            avg_quiz_score = quiz_results.aggregate(Avg('percentage'))['percentage__avg'] or 0.0
+            
+            # Get mentoring history
+            was_mentor = MentorMenteeRelationship.objects.filter(mentor=participant).exists()
+            was_mentee = MentorMenteeRelationship.objects.filter(mentee=participant).exists()
+            
+            # Calculate mentor/mentee ratings
+            mentor_feedback = MentorFeedback.objects.filter(relationship__mentor=participant)
+            mentee_feedback = MentorFeedback.objects.filter(relationship__mentee=participant)
+            
+            mentor_rating = mentor_feedback.aggregate(Avg('rating'))['rating__avg'] if was_mentor else None
+            mentee_rating = mentee_feedback.aggregate(Avg('rating'))['rating__avg'] if was_mentee else None
+            
+            # Get session participation
+            sessions_attended = Session.objects.filter(participants=participant).count()
+            sessions_conducted = Session.objects.filter(mentor=participant).count()
+            
+            # Create history record
+            ParticipantHistory.objects.create(
+                registration_no=participant.registration_no,
+                name=participant.name,
+                semester=participant.semester,
+                branch=participant.branch,
+                department=participant.department,
+                total_badges_earned=total_badges,
+                total_leaderboard_points=total_points,
+                total_quizzes_completed=total_quizzes,
+                average_quiz_score=avg_quiz_score,
+                was_mentor=was_mentor,
+                was_mentee=was_mentee,
+                mentor_rating=mentor_rating,
+                mentee_rating=mentee_rating,
+                sessions_attended=sessions_attended,
+                sessions_conducted=sessions_conducted,
+                start_date=participant.date.date(),
+                end_date=timezone.now().date()
+            )
+            archived_count += 1
+        
+        # 3. Delete all current relationships for the department
+        current_relationships.delete()
+        
+        # 4. Reset participant status for the department
+        active_participants.update(
+            mentoring_preferences='',  # Clear preferences
+            approval_status='pending',  # Reset approval status
+            badges_earned=0,  # Reset badges
+            leaderboard_points=0,  # Reset points
+            is_super_mentor=False  # Reset super mentor status
+        )
+        
+        # Get department name for response
+        department_name = "All Departments"
+        if department_id:
+            department = Department.objects.filter(id=department_id).first()
+            if department:
+                department_name = department.name
+        
+        return Response({
+            'message': f'Semester data archived successfully for {department_name}',
+            'details': {
+                'department': department_name,
+                'relationships_archived': len(archived_relationships),
+                'participants_archived': archived_count,
+                'relationships_ended': current_relationships.count(),
+                'participants_reset': active_participants.count()
+            }
+        })
+        
+    except Exception as e:
+        return Response({
+            'error': 'Failed to archive semester data',
+            'details': str(e)
+        }, status=500)
+
+@api_view(['GET'])
+def get_participant_history(request, registration_no):
+    """
+    Returns historical data for a participant across semesters.
+    Useful for showing past achievements and for matching algorithm.
+    """
+    try:
+        history = ParticipantHistory.objects.filter(registration_no=registration_no)
+        if not history.exists():
+            return Response({
+                'message': 'No historical data found for this participant'
+            })
+        
+        data = []
+        for record in history:
+            data.append({
+                'semester': record.semester,
+                'start_date': record.start_date,
+                'end_date': record.end_date,
+                'achievements': {
+                    'total_badges': record.total_badges_earned,
+                    'total_points': record.total_leaderboard_points,
+                    'quizzes_completed': record.total_quizzes_completed,
+                    'average_quiz_score': record.average_quiz_score
+                },
+                'mentoring': {
+                    'was_mentor': record.was_mentor,
+                    'was_mentee': record.was_mentee,
+                    'mentor_rating': record.mentor_rating,
+                    'mentee_rating': record.mentee_rating
+                },
+                'sessions': {
+                    'attended': record.sessions_attended,
+                    'conducted': record.sessions_conducted
+                }
+            })
+        
+        return Response(data)
+        
+    except Exception as e:
+        return Response({
+            'error': 'Failed to fetch participant history',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

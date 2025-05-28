@@ -77,4 +77,8 @@ urlpatterns = [
     path('feedback/delete/', views.delete_feedback, name='delete_feedback'),
     path('feedback/send-reminders/', views.send_feedback_reminders, name='send_feedback_reminders'),
     path('user/activity/<str:registration_no>/', user_activity_heatmap, name='user-activity-heatmap'),
+    
+    # Semester archival and history endpoints
+    path('admin/archive-semester/', views.archive_semester_data, name='archive_semester_data'),
+    path('participants/history/<str:registration_no>/', views.get_participant_history, name='get_participant_history'),
 ]

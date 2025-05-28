@@ -315,3 +315,40 @@ class FeedbackSettings(models.Model):
         if self.department:
             return f"Feedback settings for {self.department.name}"
         return "Global feedback settings"
+
+
+class ParticipantHistory(models.Model):
+    """Model to store historical data of participants across semesters"""
+    registration_no = models.CharField(max_length=20)  # Not a foreign key since Participant might be deleted
+    name = models.CharField(max_length=100)
+    semester = models.CharField(max_length=1)
+    branch = models.CharField(max_length=10)
+    department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    # Achievement tracking
+    total_badges_earned = models.IntegerField(default=0)
+    total_leaderboard_points = models.IntegerField(default=0)
+    total_quizzes_completed = models.IntegerField(default=0)
+    average_quiz_score = models.FloatField(default=0.0)
+    
+    # Mentoring history
+    was_mentor = models.BooleanField(default=False)
+    was_mentee = models.BooleanField(default=False)
+    mentor_rating = models.FloatField(null=True, blank=True)  # Average rating received as mentor
+    mentee_rating = models.FloatField(null=True, blank=True)  # Average rating received as mentee
+    
+    # Session participation
+    sessions_attended = models.IntegerField(default=0)
+    sessions_conducted = models.IntegerField(default=0)
+    
+    # Timestamps
+    start_date = models.DateField()
+    end_date = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name_plural = "Participant Histories"
+        ordering = ['-end_date']
+    
+    def __str__(self):
+        return f"{self.name} ({self.registration_no}) - {self.start_date} to {self.end_date}"
