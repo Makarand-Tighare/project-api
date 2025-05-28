@@ -96,7 +96,8 @@ def list_participants(request):
         participants = Participant.objects.filter(
             status='active',  # Only active participants
             mentoring_preferences__isnull=False,  # Must have mentoring preferences set
-            mentoring_preferences__ne=''  # Must not be empty string
+        ).exclude(
+            mentoring_preferences=''  # Exclude empty string preferences
         )
         
         # Apply filters if provided
