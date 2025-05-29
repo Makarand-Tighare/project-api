@@ -701,7 +701,7 @@ def match_participants(request):
         pending_approvals_count = Participant.objects.filter(
             approval_status='pending',
             department=department_filter,
-            # Exclude archived participants who haven't re-registered
+            # Only count participants who have re-registered (have tech stack and interests)
             tech_stack__isnull=False,
             tech_stack__gt='',
             areas_of_interest__isnull=False,
@@ -726,7 +726,7 @@ def match_participants(request):
         # Check if there are pending approvals overall
         pending_approvals_count = Participant.objects.filter(
             approval_status='pending',
-            # Exclude archived participants who haven't re-registered
+            # Only count participants who have re-registered (have tech stack and interests)
             tech_stack__isnull=False,
             tech_stack__gt='',
             areas_of_interest__isnull=False,
@@ -742,7 +742,7 @@ def match_participants(request):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Get all APPROVED participants
-        participants = Participant.objects.filter(approval_status='approved',status='active')
+        participants = Participant.objects.filter(approval_status='approved', status='active')
     
     serializer = ParticipantSerializer(participants, many=True)
     students = serializer.data
@@ -1284,7 +1284,12 @@ def create_relationship(request):
             # Check if there are pending approvals for this department
             pending_approvals_count = Participant.objects.filter(
                 approval_status='pending',
-                department=department_filter
+                department=department_filter,
+                # Only count participants who have re-registered (have tech stack and interests)
+                tech_stack__isnull=False,
+                tech_stack__gt='',
+                areas_of_interest__isnull=False,
+                areas_of_interest__gt=''
             ).count()
             if pending_approvals_count > 0:
                 return Response({
@@ -1304,12 +1309,28 @@ def create_relationship(request):
             pending_departments = []
 
             if mentor_dept:
-                count = Participant.objects.filter(approval_status='pending', department=mentor_dept).count()
+                count = Participant.objects.filter(
+                    approval_status='pending',
+                    department=mentor_dept,
+                    # Only count participants who have re-registered
+                    tech_stack__isnull=False,
+                    tech_stack__gt='',
+                    areas_of_interest__isnull=False,
+                    areas_of_interest__gt=''
+                ).count()
                 if count > 0:
                     pending_approvals_count += count
                     pending_departments.append(mentor_dept.name)
             if mentee_dept and mentee_dept != mentor_dept:
-                count = Participant.objects.filter(approval_status='pending', department=mentee_dept).count()
+                count = Participant.objects.filter(
+                    approval_status='pending',
+                    department=mentee_dept,
+                    # Only count participants who have re-registered
+                    tech_stack__isnull=False,
+                    tech_stack__gt='',
+                    areas_of_interest__isnull=False,
+                    areas_of_interest__gt=''
+                ).count()
                 if count > 0:
                     pending_approvals_count += count
                     pending_departments.append(mentee_dept.name)
