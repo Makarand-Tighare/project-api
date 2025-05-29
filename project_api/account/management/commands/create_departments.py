@@ -13,10 +13,11 @@ class Command(BaseCommand):
             {"name": "Computer Science Engineering (IoT)", "code": "CSE-IOT", "description": "CSE with IoT specialization"},
             {"name": "Computer Technology", "code": "CT", "description": "Computer Technology"},
             {"name": "Electronics and Telecommunication Engineering", "code": "ETC", "description": "E&TC Engineering"},
-            {"name": "Electrical Engineering", "code": "EE", "description": "Electrical Engineering"},
+            {"name": "Electrical Engineering", "code": "EL", "description": "Electrical Engineering"},
             {"name": "Mechanical Engineering", "code": "ME", "description": "Mechanical Engineering"},
             {"name": "Civil Engineering", "code": "CE", "description": "Civil Engineering"},
-            {"name": "Information Technology", "code": "IT", "description": "Information Technology"}
+            {"name": "Information Technology", "code": "IT", "description": "Information Technology"},
+            {"name": "Electronics Engineering", "code": "ELE", "description": "Electronics Engineering"}
         ]
         
         created_count = 0
